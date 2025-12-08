@@ -1,0 +1,24 @@
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# Logs
+*.log
+
+# Local dev files
+.env
+*.local.php
+
+# Node (if ever needed)
+node_modules/
+
+# Composer (if ever needed)
+vendor/
