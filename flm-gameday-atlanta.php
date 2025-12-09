@@ -3,7 +3,7 @@
  * Plugin Name: FLM GameDay Atlanta
  * Plugin URI: https://github.com/mainlinemedia/flm-gameday-atlanta
  * Description: Import Braves, Hawks, Falcons, UGA & GT content from Field Level Media with AI enhancement, social posting, and analytics.
- * Version: 2.18.1
+ * Version: 2.20.0
  * Author: Austin / Mainline Media Group
  * Author URI: https://mainlinemediagroup.com
  * License: Proprietary
@@ -19,7 +19,7 @@ if (!defined('ABSPATH')) exit;
 class FLM_GameDay_Atlanta {
     
     private $api_base = 'https://api.fieldlevelmedia.com/v1';
-    private $version = '2.18.1';
+    private $version = '2.20.0';
     
     // GitHub Update Configuration
     private $github_username = 'mainlinemedia';
@@ -189,6 +189,34 @@ class FLM_GameDay_Atlanta {
         'dashboard_cache_seconds' => 300,  // 5 minute cache for real-time
         // GitHub Auto-Updates (v2.17.0)
         'github_token' => '',  // Optional: Personal Access Token for private repos
+        // Newsletter Builder (v2.19.0)
+        'newsletter_enabled' => false,
+        'newsletter_frequency' => 'daily',  // daily, weekly
+        'newsletter_send_time' => '08:00',
+        'newsletter_subject_template' => '📰 {site_name} Daily Sports Digest - {date}',
+        'newsletter_from_name' => '',
+        'newsletter_from_email' => '',
+        'newsletter_reply_to' => '',
+        'newsletter_max_stories' => 10,
+        'newsletter_include_images' => true,
+        'newsletter_teams_filter' => [],  // Empty = all teams
+        'newsletter_last_sent' => '',
+        // A/B Headline Testing (v2.19.0)
+        'ab_testing_enabled' => false,
+        'ab_test_duration' => 24,  // Hours before selecting winner
+        'ab_test_metric' => 'ctr',  // ctr, views, engagement
+        'ab_test_min_views' => 100,  // Minimum views before declaring winner
+        'ab_test_auto_select' => true,  // Automatically select winning headline
+        // RSS Feed Output (v2.20.0)
+        'rss_feeds_enabled' => true,
+        'rss_feed_categories' => [],  // Array of category IDs to expose as feeds
+        'rss_feed_teams' => [],  // Array of team keys to expose as feeds
+        'rss_posts_per_feed' => 20,
+        'rss_include_featured_image' => true,
+        'rss_full_content' => false,  // false = excerpt only
+        // Webhook Integrations (v2.20.0)
+        'webhooks_enabled' => false,
+        'webhooks' => [],  // Array of webhook configs
     ];
     
     // Integration endpoints (v2.8.0)
@@ -201,6 +229,37 @@ class FLM_GameDay_Atlanta {
         'bing' => 'https://ssl.bing.com/webmaster/api.svc/json',
         'sendgrid' => 'https://api.sendgrid.com/v3',
         'aigeon' => 'https://api.aigeon.ai/v1',  // Placeholder - update when docs available
+    ];
+    
+    // Consolidated team hashtags for social media (v2.19.0)
+    private $team_hashtags = [
+        'twitter' => [
+            'braves' => '#Braves #ForTheA',
+            'falcons' => '#Falcons #RiseUp',
+            'hawks' => '#Hawks #TrueToAtlanta',
+            'united' => '#ATLUTD #UniteAndConquer',
+            'dream' => '#AtlantaDream #DreamOn',
+            'uga' => '#UGA #GoDawgs',
+            'gt' => '#GaTech #TogetherWeSwarm',
+        ],
+        'instagram' => [
+            'braves' => '#Braves #ForTheA #ChopOn #AtlantaBraves #MLB',
+            'falcons' => '#Falcons #RiseUp #DirtyBirds #AtlantaFalcons #NFL',
+            'hawks' => '#Hawks #TrueToAtlanta #ATLHawks #AtlantaHawks #NBA',
+            'united' => '#ATLUTD #UniteAndConquer #AtlantaUnited #MLS #5Stripes',
+            'dream' => '#AtlantaDream #DreamOn #WNBA #WNBATwitter #WomensSports',
+            'uga' => '#UGA #GoDawgs #GeorgiaBulldogs #SEC #CollegeFootball',
+            'gt' => '#GaTech #TogetherWeSwarm #YellowJackets #ACC #GeorgiaTech',
+        ],
+        'facebook' => [
+            'braves' => '#Braves #ForTheA #AtlantaBraves',
+            'falcons' => '#Falcons #RiseUp #AtlantaFalcons',
+            'hawks' => '#Hawks #TrueToAtlanta #AtlantaHawks',
+            'united' => '#ATLUTD #UniteAndConquer #AtlantaUnited',
+            'dream' => '#AtlantaDream #DreamOn #WNBA',
+            'uga' => '#UGA #GoDawgs #GeorgiaBulldogs',
+            'gt' => '#GaTech #TogetherWeSwarm #YellowJackets',
+        ],
     ];
     
     // Team configuration with colors for UI
@@ -431,6 +490,41 @@ class FLM_GameDay_Atlanta {
         add_action('wp_ajax_flm_instagram_disconnect', [$this, 'ajax_instagram_disconnect']);
         add_action('wp_ajax_flm_instagram_test_post', [$this, 'ajax_instagram_test_post']);
         add_action('wp_ajax_flm_get_social_stats', [$this, 'ajax_get_social_stats']);
+        
+        // Newsletter Builder (v2.19.0)
+        add_action('wp_ajax_flm_preview_newsletter', [$this, 'ajax_preview_newsletter']);
+        add_action('wp_ajax_flm_send_newsletter', [$this, 'ajax_send_newsletter']);
+        add_action('wp_ajax_flm_send_test_newsletter', [$this, 'ajax_send_test_newsletter']);
+        
+        // A/B Headline Testing (v2.19.0)
+        add_action('wp_ajax_flm_create_ab_test', [$this, 'ajax_create_ab_test']);
+        add_action('wp_ajax_flm_get_ab_tests', [$this, 'ajax_get_ab_tests']);
+        add_action('wp_ajax_flm_select_ab_winner', [$this, 'ajax_select_ab_winner']);
+        add_action('wp_ajax_flm_delete_ab_test', [$this, 'ajax_delete_ab_test']);
+        
+        // Cron for A/B testing auto-selection
+        add_action('flm_check_ab_tests', [$this, 'check_ab_test_winners']);
+        
+        // AI Headline Generator (v2.20.0)
+        add_action('wp_ajax_flm_generate_headlines', [$this, 'ajax_generate_headlines']);
+        
+        // RSS Feeds (v2.20.0)
+        add_action('wp_ajax_flm_get_rss_feeds', [$this, 'ajax_get_rss_feeds']);
+        add_action('wp_ajax_flm_save_rss_settings', [$this, 'ajax_save_rss_settings']);
+        add_action('init', [$this, 'register_custom_feeds']);
+        
+        // Webhook Integrations (v2.20.0)
+        add_action('wp_ajax_flm_get_webhooks', [$this, 'ajax_get_webhooks']);
+        add_action('wp_ajax_flm_save_webhook', [$this, 'ajax_save_webhook']);
+        add_action('wp_ajax_flm_delete_webhook', [$this, 'ajax_delete_webhook']);
+        add_action('wp_ajax_flm_test_webhook', [$this, 'ajax_test_webhook']);
+        
+        // Enhanced Analytics Export (v2.20.0)
+        add_action('wp_ajax_flm_export_analytics', [$this, 'ajax_export_analytics']);
+        
+        // Webhook triggers on content events
+        add_action('flm_post_imported', [$this, 'trigger_webhook_post_imported'], 10, 2);
+        add_action('flm_breaking_news_detected', [$this, 'trigger_webhook_breaking_news'], 10, 1);
     }
     
     /**
@@ -480,6 +574,8 @@ class FLM_GameDay_Atlanta {
             'settings' => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/></svg>',
             'share' => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.59 13.51l6.83 3.98M15.41 6.51l-6.82 3.98"/></svg>',
             'upload' => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>',
+            'mail' => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><path d="M22 6l-10 7L2 6"/></svg>',
+            'send' => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>',
         ];
     }
     
@@ -13199,6 +13295,36 @@ class FLM_GameDay_Atlanta {
             $(document).on("click", "#flm-instagram-disconnect", this.instagramDisconnect);
             $(document).on("click", "#flm-instagram-test", this.instagramTest);
             
+            // v2.19.0: Newsletter Builder
+            $(document).on("click", "#flm-preview-newsletter", this.previewNewsletter);
+            $(document).on("click", "#flm-send-test-newsletter", this.sendTestNewsletter);
+            $(document).on("click", "#flm-send-newsletter", this.sendNewsletter);
+            $(document).on("click", "#flm-close-newsletter-preview", this.closeNewsletterPreview);
+            
+            // v2.19.0: A/B Headline Testing
+            $(document).on("click", "#flm-create-ab-test", this.createAbTest);
+            $(document).on("click", ".flm-select-ab-winner", this.selectAbWinner);
+            $(document).on("click", ".flm-delete-ab-test", this.deleteAbTest);
+            $(document).on("change", "#flm-ab-post-select", this.populateAbHeadline);
+            
+            // v2.20.0: AI Headline Generator
+            $(document).on("click", ".flm-headline-tab", this.switchHeadlineTab);
+            $(document).on("click", "#flm-generate-headlines-btn", this.generateHeadlines);
+            $(document).on("click", ".flm-use-headline", this.useGeneratedHeadline);
+            
+            // v2.20.0: RSS Feeds
+            $(document).on("click", ".flm-copy-url", this.copyFeedUrl);
+            $(document).on("click", "#flm-refresh-feeds", this.refreshFeeds);
+            $(document).on("change", ".flm-tag-toggle input", this.toggleRssTag);
+            
+            // v2.20.0: Webhooks
+            $(document).on("click", "#flm-add-webhook", this.addWebhook);
+            $(document).on("click", ".flm-test-webhook", this.testWebhook);
+            $(document).on("click", ".flm-delete-webhook", this.deleteWebhook);
+            
+            // v2.20.0: Enhanced Analytics
+            $(document).on("click", "#flm-export-analytics", this.exportAnalytics);
+            
             // ESP Integration (v2.13.0)
             $(document).on("change", "input[name=\'flm_settings[esp_provider]\']", this.toggleEspSettings);
             $(document).on("click", ".flm-test-esp", this.testEspConnection);
@@ -13261,6 +13387,11 @@ class FLM_GameDay_Atlanta {
                 setTimeout(function() {
                     MLInsights.checkGitHubUpdates.call($("#flm-check-updates")[0]);
                 }, 1000);
+            }
+            
+            // v2.19.0: Auto-load A/B tests
+            if ($("#flm-ab-tests-list").length) {
+                this.loadAbTests();
             }
         },
         
@@ -14096,6 +14227,585 @@ class FLM_GameDay_Atlanta {
                         "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" style=\"width:14px;height:14px;\"><path d=\"M13 2L3 14h9l-1 8 10-12h-9l1-8z\"/></svg>" +
                         " Test Post"
                     );
+                }
+            });
+        },
+        
+        // v2.19.0: Newsletter Builder
+        previewNewsletter: function() {
+            const $btn = $(this);
+            $btn.prop("disabled", true).html(
+                "<svg class=\"flm-spinner\" viewBox=\"0 0 24 24\"><circle cx=\"12\" cy=\"12\" r=\"10\" stroke=\"currentColor\" stroke-width=\"2\" fill=\"none\" stroke-dasharray=\"31.4\" stroke-dashoffset=\"10\"/></svg>" +
+                " Loading..."
+            );
+            
+            $.ajax({
+                url: flmAdmin.ajaxUrl,
+                type: "POST",
+                data: {
+                    action: "flm_preview_newsletter",
+                    nonce: flmAdmin.nonce
+                },
+                success: function(response) {
+                    if (response.success) {
+                        $("#flm-newsletter-preview-content").html(response.data.html);
+                        $("#flm-newsletter-preview").slideDown();
+                        Toast.show("success", "Preview Ready", response.data.story_count + " stories included");
+                    } else {
+                        Toast.show("error", "Preview Failed", response.data || "Could not generate preview");
+                    }
+                },
+                complete: function() {
+                    $btn.prop("disabled", false).html(
+                        "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" style=\"width:14px;height:14px;\"><path d=\"M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z\"/><circle cx=\"12\" cy=\"12\" r=\"3\"/></svg>" +
+                        " Preview Newsletter"
+                    );
+                }
+            });
+        },
+        
+        sendTestNewsletter: function() {
+            const email = prompt("Enter email address for test:", flmAdmin.adminEmail || "");
+            if (!email) return;
+            
+            const $btn = $(this);
+            $btn.prop("disabled", true).text("Sending...");
+            
+            $.ajax({
+                url: flmAdmin.ajaxUrl,
+                type: "POST",
+                data: {
+                    action: "flm_send_test_newsletter",
+                    nonce: flmAdmin.nonce,
+                    email: email
+                },
+                success: function(response) {
+                    if (response.success) {
+                        Toast.show("success", "Test Sent", response.data.message);
+                    } else {
+                        Toast.show("error", "Send Failed", response.data || "Could not send test");
+                    }
+                },
+                complete: function() {
+                    $btn.prop("disabled", false).html(
+                        "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" style=\"width:14px;height:14px;\"><path d=\"M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z\"/><path d=\"M22 6l-10 7L2 6\"/></svg>" +
+                        " Send Test"
+                    );
+                }
+            });
+        },
+        
+        sendNewsletter: function() {
+            if (!confirm("Send newsletter to all subscribers now?")) return;
+            
+            const $btn = $(this);
+            $btn.prop("disabled", true).text("Sending...");
+            
+            $.ajax({
+                url: flmAdmin.ajaxUrl,
+                type: "POST",
+                data: {
+                    action: "flm_send_newsletter",
+                    nonce: flmAdmin.nonce
+                },
+                success: function(response) {
+                    if (response.success) {
+                        Toast.show("success", "Newsletter Sent", "Sent to " + response.data.sent + " subscribers");
+                    } else {
+                        Toast.show("error", "Send Failed", response.data || "Could not send newsletter");
+                    }
+                },
+                complete: function() {
+                    $btn.prop("disabled", false).html(
+                        "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" style=\"width:14px;height:14px;\"><path d=\"M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z\"/></svg>" +
+                        " Send Now"
+                    );
+                }
+            });
+        },
+        
+        closeNewsletterPreview: function() {
+            $("#flm-newsletter-preview").slideUp();
+        },
+        
+        // v2.19.0: A/B Headline Testing
+        loadAbTests: function() {
+            $.ajax({
+                url: flmAdmin.ajaxUrl,
+                type: "POST",
+                data: {
+                    action: "flm_get_ab_tests",
+                    nonce: flmAdmin.nonce
+                },
+                success: function(response) {
+                    if (response.success) {
+                        MLInsights.renderAbTests(response.data);
+                    }
+                }
+            });
+        },
+        
+        renderAbTests: function(tests) {
+            const $list = $("#flm-ab-tests-list");
+            
+            const activeTests = Object.values(tests).filter(t => t.status === "running");
+            
+            if (activeTests.length === 0) {
+                $list.html("<p style=\"color:var(--flm-text-muted);font-size:13px;margin:0;\">No active tests. Create one above!</p>");
+                return;
+            }
+            
+            let html = "";
+            activeTests.forEach(function(test) {
+                const ctrA = test.stats.a.ctr || 0;
+                const ctrB = test.stats.b.ctr || 0;
+                const winnerSoFar = ctrA > ctrB ? "A" : (ctrB > ctrA ? "B" : "Tie");
+                
+                html += "<div style=\"background:var(--flm-bg-input);border-radius:8px;padding:16px;border:1px solid var(--flm-border);\">" +
+                    "<div style=\"display:flex;justify-content:space-between;align-items:start;margin-bottom:12px;\">" +
+                        "<div style=\"flex:1;\">" +
+                            "<div style=\"font-weight:600;color:var(--flm-text);font-size:13px;margin-bottom:4px;\">Post #" + test.post_id + "</div>" +
+                            "<div style=\"font-size:11px;color:var(--flm-text-muted);\">Started: " + test.started_at + "</div>" +
+                        "</div>" +
+                        "<span style=\"padding:4px 8px;border-radius:12px;font-size:10px;font-weight:600;background:rgba(63,185,80,0.15);color:var(--flm-success);\">Running</span>" +
+                    "</div>" +
+                    "<div style=\"display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;\">" +
+                        "<div style=\"background:var(--flm-bg);padding:12px;border-radius:8px;border:" + (winnerSoFar === "A" ? "2px solid var(--flm-success)" : "1px solid var(--flm-border)") + ";\">" +
+                            "<div style=\"font-size:11px;color:var(--flm-text-muted);margin-bottom:4px;\">Headline A</div>" +
+                            "<div style=\"font-size:12px;color:var(--flm-text);margin-bottom:8px;\">" + test.headline_a.substring(0, 50) + "...</div>" +
+                            "<div style=\"display:flex;gap:12px;font-size:11px;\">" +
+                                "<span>👁 " + test.stats.a.views + " views</span>" +
+                                "<span>🖱 " + ctrA + "% CTR</span>" +
+                            "</div>" +
+                        "</div>" +
+                        "<div style=\"background:var(--flm-bg);padding:12px;border-radius:8px;border:" + (winnerSoFar === "B" ? "2px solid var(--flm-success)" : "1px solid var(--flm-border)") + ";\">" +
+                            "<div style=\"font-size:11px;color:var(--flm-text-muted);margin-bottom:4px;\">Headline B</div>" +
+                            "<div style=\"font-size:12px;color:var(--flm-text);margin-bottom:8px;\">" + test.headline_b.substring(0, 50) + "...</div>" +
+                            "<div style=\"display:flex;gap:12px;font-size:11px;\">" +
+                                "<span>👁 " + test.stats.b.views + " views</span>" +
+                                "<span>🖱 " + ctrB + "% CTR</span>" +
+                            "</div>" +
+                        "</div>" +
+                    "</div>" +
+                    "<div style=\"display:flex;gap:8px;\">" +
+                        "<button type=\"button\" class=\"flm-btn flm-btn-sm flm-btn-success flm-select-ab-winner\" data-test=\"" + test.id + "\" data-winner=\"a\">Select A</button>" +
+                        "<button type=\"button\" class=\"flm-btn flm-btn-sm flm-btn-success flm-select-ab-winner\" data-test=\"" + test.id + "\" data-winner=\"b\">Select B</button>" +
+                        "<button type=\"button\" class=\"flm-btn flm-btn-sm flm-btn-secondary flm-delete-ab-test\" data-test=\"" + test.id + "\" style=\"margin-left:auto;color:var(--flm-danger);\">Cancel</button>" +
+                    "</div>" +
+                "</div>";
+            });
+            
+            $list.html(html);
+        },
+        
+        createAbTest: function() {
+            const postId = $("#flm-ab-post-select").val();
+            const headlineA = $("#flm-ab-headline-a").val().trim();
+            const headlineB = $("#flm-ab-headline-b").val().trim();
+            
+            if (!postId) {
+                Toast.show("error", "Error", "Please select a post");
+                return;
+            }
+            if (!headlineA || !headlineB) {
+                Toast.show("error", "Error", "Both headlines are required");
+                return;
+            }
+            
+            const $btn = $(this);
+            $btn.prop("disabled", true).text("Creating...");
+            
+            $.ajax({
+                url: flmAdmin.ajaxUrl,
+                type: "POST",
+                data: {
+                    action: "flm_create_ab_test",
+                    nonce: flmAdmin.nonce,
+                    post_id: postId,
+                    headline_a: headlineA,
+                    headline_b: headlineB
+                },
+                success: function(response) {
+                    if (response.success) {
+                        Toast.show("success", "Test Created", response.data.message);
+                        MLInsights.loadAbTests();
+                        $("#flm-ab-post-select").val("");
+                        $("#flm-ab-headline-a, #flm-ab-headline-b").val("");
+                    } else {
+                        Toast.show("error", "Error", response.data || "Could not create test");
+                    }
+                },
+                complete: function() {
+                    $btn.prop("disabled", false).html(
+                        "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" style=\"width:14px;height:14px;\"><path d=\"M13 2L3 14h9l-1 8 10-12h-9l1-8z\"/></svg>" +
+                        " Start A/B Test"
+                    );
+                }
+            });
+        },
+        
+        selectAbWinner: function() {
+            const testId = $(this).data("test");
+            const winner = $(this).data("winner");
+            
+            if (!confirm("Select Headline " + winner.toUpperCase() + " as the winner?")) return;
+            
+            $.ajax({
+                url: flmAdmin.ajaxUrl,
+                type: "POST",
+                data: {
+                    action: "flm_select_ab_winner",
+                    nonce: flmAdmin.nonce,
+                    test_id: testId,
+                    winner: winner
+                },
+                success: function(response) {
+                    if (response.success) {
+                        Toast.show("success", "Winner Selected", response.data.message);
+                        MLInsights.loadAbTests();
+                    } else {
+                        Toast.show("error", "Error", response.data || "Could not select winner");
+                    }
+                }
+            });
+        },
+        
+        deleteAbTest: function() {
+            if (!confirm("Cancel this A/B test? The original headline will be restored.")) return;
+            
+            const testId = $(this).data("test");
+            
+            $.ajax({
+                url: flmAdmin.ajaxUrl,
+                type: "POST",
+                data: {
+                    action: "flm_delete_ab_test",
+                    nonce: flmAdmin.nonce,
+                    test_id: testId
+                },
+                success: function(response) {
+                    if (response.success) {
+                        Toast.show("success", "Test Cancelled", response.data.message);
+                        MLInsights.loadAbTests();
+                    } else {
+                        Toast.show("error", "Error", response.data || "Could not delete test");
+                    }
+                }
+            });
+        },
+        
+        populateAbHeadline: function() {
+            const $selected = $(this).find(":selected");
+            const title = $selected.data("title") || "";
+            $("#flm-ab-headline-a").val(title);
+            $("#flm-ab-headline-b").val("");
+        },
+        
+        // v2.20.0: Switch headline tabs (Analyze/Generate)
+        switchHeadlineTab: function() {
+            const tab = $(this).data("tab");
+            $(".flm-headline-tab").removeClass("active").css({
+                "background": "var(--flm-bg)",
+                "color": "var(--flm-text)"
+            });
+            $(this).addClass("active").css({
+                "background": "var(--flm-accent)",
+                "color": "white"
+            });
+            $(".flm-headline-tab-content").hide();
+            $("#flm-headline-tab-" + tab).show();
+        },
+        
+        // v2.20.0: Generate alternative headlines
+        generateHeadlines: function() {
+            const $btn = $(this);
+            const headline = $("#flm-generate-headline-input").val().trim();
+            const team = $("#flm-generate-team").val();
+            const context = $("#flm-generate-context").val();
+            
+            if (!headline) {
+                Toast.show("error", "Missing Headline", "Please enter a headline to generate alternatives for");
+                return;
+            }
+            
+            $btn.prop("disabled", true).html(
+                "<svg class=\"flm-spinner\" viewBox=\"0 0 24 24\"><circle cx=\"12\" cy=\"12\" r=\"10\" stroke=\"currentColor\" stroke-width=\"2\" fill=\"none\" stroke-dasharray=\"31.4\" stroke-dashoffset=\"10\"/></svg>" +
+                " Generating..."
+            );
+            
+            $.ajax({
+                url: flmAdmin.ajaxUrl,
+                type: "POST",
+                data: {
+                    action: "flm_generate_headlines",
+                    nonce: flmAdmin.nonce,
+                    headline: headline,
+                    team: team,
+                    context: context
+                },
+                success: function(response) {
+                    if (response.success) {
+                        const data = response.data;
+                        const $list = $("#flm-headlines-list");
+                        $list.empty();
+                        
+                        data.headlines.forEach(function(h, i) {
+                            const styleColors = {
+                                "direct": "#3b82f6",
+                                "question": "#8b5cf6",
+                                "action": "#ef4444",
+                                "emotional": "#f59e0b",
+                                "seo": "#22c55e",
+                                "breaking": "#ef4444",
+                                "analysis": "#6366f1",
+                                "list": "#14b8a6",
+                                "fan": "#ec4899"
+                            };
+                            const color = styleColors[h.style] || "#6b7280";
+                            
+                            $list.append(`
+                                <div class="flm-generated-headline" style="display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--flm-bg);border-radius:8px;border:1px solid var(--flm-border);cursor:pointer;transition:all 0.2s;" data-headline="${h.text.replace(/"/g, '&quot;')}">
+                                    <span style="font-size:18px;font-weight:700;color:var(--flm-text-muted);width:24px;">${i + 1}</span>
+                                    <div style="flex:1;">
+                                        <div style="color:var(--flm-text);font-weight:500;">${h.text}</div>
+                                        <div style="display:flex;gap:8px;margin-top:4px;font-size:11px;">
+                                            <span style="padding:2px 6px;background:${color}20;color:${color};border-radius:4px;text-transform:capitalize;">${h.style}</span>
+                                            <span style="color:var(--flm-text-muted);">${h.chars} chars</span>
+                                        </div>
+                                    </div>
+                                    <button type="button" class="flm-use-headline flm-btn flm-btn-sm flm-btn-secondary" style="white-space:nowrap;">
+                                        Use This
+                                    </button>
+                                </div>
+                            `);
+                        });
+                        
+                        $("#flm-generate-source").text(data.source === "claude" ? "Powered by Claude" : "Local Suggestions");
+                        
+                        if (data.analysis) {
+                            $("#flm-headline-analysis-text").text(data.analysis);
+                            $("#flm-headline-analysis").show();
+                        } else {
+                            $("#flm-headline-analysis").hide();
+                        }
+                        
+                        $("#flm-generated-headlines").show();
+                        Toast.show("success", "Headlines Generated", `Generated ${data.headlines.length} alternative headlines`);
+                    } else {
+                        Toast.show("error", "Generation Failed", response.data || "Could not generate headlines");
+                    }
+                },
+                error: function() {
+                    Toast.show("error", "Generation Failed", "An error occurred");
+                },
+                complete: function() {
+                    $btn.prop("disabled", false).html(\'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg> Generate 5 Alternative Headlines\');
+                }
+            });
+        },
+        
+        // v2.20.0: Use a generated headline
+        useGeneratedHeadline: function(e) {
+            e.stopPropagation();
+            const headline = $(this).closest(".flm-generated-headline").data("headline");
+            
+            // Copy to clipboard
+            navigator.clipboard.writeText(headline).then(function() {
+                Toast.show("success", "Copied!", "Headline copied to clipboard");
+            }).catch(function() {
+                // Fallback for older browsers
+                const $temp = $("<textarea>");
+                $("body").append($temp);
+                $temp.val(headline).select();
+                document.execCommand("copy");
+                $temp.remove();
+                Toast.show("success", "Copied!", "Headline copied to clipboard");
+            });
+        },
+        
+        // v2.20.0: Copy feed URL
+        copyFeedUrl: function() {
+            const url = $(this).data("url");
+            navigator.clipboard.writeText(url).then(function() {
+                Toast.show("success", "Copied!", "Feed URL copied to clipboard");
+            });
+        },
+        
+        // v2.20.0: Refresh feeds
+        refreshFeeds: function() {
+            Toast.show("info", "Feeds Refreshed", "RSS feed settings will take effect after saving");
+        },
+        
+        // v2.20.0: Toggle RSS tag
+        toggleRssTag: function() {
+            const $label = $(this).closest("label");
+            if ($(this).is(":checked")) {
+                $label.addClass("active").css({
+                    "background": "var(--flm-accent)",
+                    "color": "white"
+                });
+            } else {
+                $label.removeClass("active").css({
+                    "background": "var(--flm-bg)",
+                    "color": "var(--flm-text)"
+                });
+            }
+        },
+        
+        // v2.20.0: Add webhook
+        addWebhook: function() {
+            const name = $("#flm-webhook-name").val().trim() || "Webhook";
+            const url = $("#flm-webhook-url").val().trim();
+            const secret = $("#flm-webhook-secret").val().trim();
+            const events = [];
+            
+            $(".flm-webhook-event:checked").each(function() {
+                events.push($(this).val());
+            });
+            
+            if (!url) {
+                Toast.show("error", "Missing URL", "Please enter a webhook URL");
+                return;
+            }
+            
+            if (events.length === 0) {
+                Toast.show("error", "No Events", "Please select at least one trigger event");
+                return;
+            }
+            
+            const $btn = $(this);
+            $btn.prop("disabled", true).html(
+                "<svg class=\"flm-spinner\" viewBox=\"0 0 24 24\"><circle cx=\"12\" cy=\"12\" r=\"10\" stroke=\"currentColor\" stroke-width=\"2\" fill=\"none\" stroke-dasharray=\"31.4\" stroke-dashoffset=\"10\"/></svg>" +
+                " Adding..."
+            );
+            
+            $.ajax({
+                url: flmAdmin.ajaxUrl,
+                type: "POST",
+                data: {
+                    action: "flm_save_webhook",
+                    nonce: flmAdmin.nonce,
+                    name: name,
+                    url: url,
+                    secret: secret,
+                    events: events,
+                    enabled: true
+                },
+                success: function(response) {
+                    if (response.success) {
+                        Toast.show("success", "Webhook Added", response.data.message);
+                        // Clear form
+                        $("#flm-webhook-name").val("");
+                        $("#flm-webhook-url").val("");
+                        $("#flm-webhook-secret").val("");
+                        $(".flm-webhook-event").prop("checked", false);
+                        // Reload page to show new webhook
+                        location.reload();
+                    } else {
+                        Toast.show("error", "Failed", response.data || "Could not add webhook");
+                    }
+                },
+                error: function() {
+                    Toast.show("error", "Failed", "An error occurred");
+                },
+                complete: function() {
+                    $btn.prop("disabled", false).html(\'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M12 22v-5M9 8V2M15 8V2M18 8H6a2 2 0 00-2 2v1a5 5 0 005 5h6a5 5 0 005-5v-1a2 2 0 00-2-2z"/></svg> Add Webhook\');
+                }
+            });
+        },
+        
+        // v2.20.0: Test webhook
+        testWebhook: function() {
+            const id = $(this).data("id");
+            const $btn = $(this);
+            
+            $btn.prop("disabled", true);
+            
+            $.ajax({
+                url: flmAdmin.ajaxUrl,
+                type: "POST",
+                data: {
+                    action: "flm_test_webhook",
+                    nonce: flmAdmin.nonce,
+                    id: id
+                },
+                success: function(response) {
+                    if (response.success) {
+                        Toast.show("success", "Test Sent", response.data.message);
+                    } else {
+                        Toast.show("error", "Test Failed", response.data || "Webhook test failed");
+                    }
+                },
+                error: function() {
+                    Toast.show("error", "Test Failed", "An error occurred");
+                },
+                complete: function() {
+                    $btn.prop("disabled", false);
+                }
+            });
+        },
+        
+        // v2.20.0: Delete webhook
+        deleteWebhook: function() {
+            const id = $(this).data("id");
+            const $item = $(this).closest(".flm-webhook-item");
+            
+            if (!confirm("Delete this webhook?")) return;
+            
+            $.ajax({
+                url: flmAdmin.ajaxUrl,
+                type: "POST",
+                data: {
+                    action: "flm_delete_webhook",
+                    nonce: flmAdmin.nonce,
+                    id: id
+                },
+                success: function(response) {
+                    if (response.success) {
+                        $item.slideUp(200, function() { $(this).remove(); });
+                        Toast.show("success", "Deleted", response.data.message);
+                    } else {
+                        Toast.show("error", "Failed", response.data || "Could not delete webhook");
+                    }
+                },
+                error: function() {
+                    Toast.show("error", "Failed", "An error occurred");
+                }
+            });
+        },
+        
+        // v2.20.0: Export analytics
+        exportAnalytics: function() {
+            const days = $(this).data("days") || 30;
+            
+            $.ajax({
+                url: flmAdmin.ajaxUrl,
+                type: "POST",
+                data: {
+                    action: "flm_export_analytics",
+                    nonce: flmAdmin.nonce,
+                    days: days,
+                    format: "csv"
+                },
+                success: function(response) {
+                    if (response.success) {
+                        // Download CSV
+                        const blob = new Blob([response.data.csv], { type: "text/csv" });
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement("a");
+                        a.href = url;
+                        a.download = response.data.filename;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        window.URL.revokeObjectURL(url);
+                        Toast.show("success", "Exported", "Analytics data downloaded");
+                    } else {
+                        Toast.show("error", "Export Failed", response.data || "Could not export analytics");
+                    }
+                },
+                error: function() {
+                    Toast.show("error", "Export Failed", "An error occurred");
                 }
             });
         },
@@ -15259,16 +15969,6 @@ class FLM_GameDay_Atlanta {
         $template = $settings['instagram_post_template'] ?? "📰 {headline}\n\n{team_hashtag}\n\n🔗 Link in bio";
         $team_config = $this->target_teams[$team_key] ?? [];
         
-        $team_hashtags = [
-            'braves' => '#Braves #ForTheA #ChopOn #AtlantaBraves #MLB',
-            'falcons' => '#Falcons #RiseUp #DirtyBirds #AtlantaFalcons #NFL',
-            'hawks' => '#Hawks #TrueToAtlanta #AtlantaHawks #NBA',
-            'united' => '#ATLUTD #UniteAndConquer #AtlantaUnited #MLS',
-            'dream' => '#AtlantaDream #DreamOn #WNBA',
-            'uga' => '#UGA #GoDawgs #Dawgs #Georgia #SEC',
-            'gt' => '#GaTech #TogetherWeSwarm #YellowJackets #ACC',
-        ];
-        
         $caption = str_replace([
             '{headline}',
             '{team}',
@@ -15278,7 +15978,7 @@ class FLM_GameDay_Atlanta {
         ], [
             $headline,
             $team_config['name'] ?? '',
-            $team_hashtags[$team_key] ?? '#Atlanta #Sports',
+            $this->get_team_hashtags($team_key, 'instagram'),
             $team_config['league'] ?? '',
             $post_url,
         ], $template);
@@ -15321,16 +16021,6 @@ class FLM_GameDay_Atlanta {
         $template = $settings['twitter_post_template'] ?? '📰 {headline} #Atlanta #Sports {team_hashtag}';
         $team_config = $this->target_teams[$team_key] ?? [];
         
-        $team_hashtags = [
-            'braves' => '#Braves #ForTheA',
-            'falcons' => '#Falcons #RiseUp',
-            'hawks' => '#Hawks #TrueToAtlanta',
-            'united' => '#ATLUTD #UniteAndConquer',
-            'dream' => '#AtlantaDream #DreamOn',
-            'uga' => '#UGA #GoDawgs',
-            'gt' => '#GaTech #TogetherWeSwarm',
-        ];
-        
         $tweet_text = str_replace([
             '{headline}',
             '{url}',
@@ -15341,7 +16031,7 @@ class FLM_GameDay_Atlanta {
             $headline,
             $tracked_url,
             $team_config['name'] ?? '',
-            $team_hashtags[$team_key] ?? '#Atlanta',
+            $this->get_team_hashtags($team_key, 'twitter'),
             $team_config['league'] ?? '',
         ], $template);
         
@@ -15513,6 +16203,14 @@ class FLM_GameDay_Atlanta {
      * @param string $team_key Team identifier
      * @return string URL with UTM parameters
      */
+    /**
+     * Get team hashtags for a specific platform (v2.19.0)
+     */
+    private function get_team_hashtags($team_key, $platform = 'twitter') {
+        $hashtags = $this->team_hashtags[$platform][$team_key] ?? $this->team_hashtags['twitter'][$team_key] ?? '#Atlanta #Sports';
+        return $hashtags;
+    }
+    
     private function build_utm_url($url, $platform, $team_key = '') {
         $settings = $this->get_settings();
         
@@ -15564,12 +16262,12 @@ class FLM_GameDay_Atlanta {
     private function post_to_facebook($post_id, $headline, $post_url, $team_key, $image_url = '') {
         $settings = $this->get_settings();
         
-        // Check credentials
+        // Check credentials - use page access token from OAuth (v2.18.0)
         $page_id = $settings['facebook_page_id'] ?? '';
-        $access_token = $settings['facebook_access_token'] ?? '';
+        $access_token = $settings['facebook_page_access_token'] ?? $settings['facebook_access_token'] ?? '';
         
         if (empty($page_id) || empty($access_token)) {
-            return ['success' => false, 'error' => 'Facebook credentials not configured'];
+            return ['success' => false, 'error' => 'Facebook not connected. Connect via Instagram integration.'];
         }
         
         // Add UTM parameters to URL (v2.10.0)
@@ -17843,6 +18541,70 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
             $settings['github_token'] = $old_settings['github_token'] ?? '';
         }
         
+        // v2.19.0: Newsletter Builder settings - preserve if not in form
+        $newsletter_submitted = isset($post_data['newsletter_frequency']) || isset($post_data['newsletter_subject_template']);
+        if ($newsletter_submitted) {
+            $settings['newsletter_enabled'] = !empty($post_data['newsletter_enabled']);
+            $settings['newsletter_frequency'] = in_array($post_data['newsletter_frequency'] ?? 'daily', ['daily', 'weekly']) ? $post_data['newsletter_frequency'] : 'daily';
+            $settings['newsletter_send_time'] = sanitize_text_field($post_data['newsletter_send_time'] ?? '08:00');
+            $settings['newsletter_subject_template'] = sanitize_text_field($post_data['newsletter_subject_template'] ?? '📰 {site_name} Daily Sports Digest - {date}');
+            $settings['newsletter_from_name'] = sanitize_text_field($post_data['newsletter_from_name'] ?? '');
+            $settings['newsletter_from_email'] = sanitize_email($post_data['newsletter_from_email'] ?? '');
+            $settings['newsletter_reply_to'] = sanitize_email($post_data['newsletter_reply_to'] ?? '');
+            $settings['newsletter_max_stories'] = absint($post_data['newsletter_max_stories'] ?? 10);
+            $settings['newsletter_include_images'] = !empty($post_data['newsletter_include_images']);
+        } else {
+            $settings['newsletter_enabled'] = $old_settings['newsletter_enabled'] ?? false;
+            $settings['newsletter_frequency'] = $old_settings['newsletter_frequency'] ?? 'daily';
+            $settings['newsletter_send_time'] = $old_settings['newsletter_send_time'] ?? '08:00';
+            $settings['newsletter_subject_template'] = $old_settings['newsletter_subject_template'] ?? '📰 {site_name} Daily Sports Digest - {date}';
+            $settings['newsletter_from_name'] = $old_settings['newsletter_from_name'] ?? '';
+            $settings['newsletter_from_email'] = $old_settings['newsletter_from_email'] ?? '';
+            $settings['newsletter_reply_to'] = $old_settings['newsletter_reply_to'] ?? '';
+            $settings['newsletter_max_stories'] = $old_settings['newsletter_max_stories'] ?? 10;
+            $settings['newsletter_include_images'] = $old_settings['newsletter_include_images'] ?? true;
+        }
+        $settings['newsletter_last_sent'] = $old_settings['newsletter_last_sent'] ?? '';
+        $settings['newsletter_teams_filter'] = $old_settings['newsletter_teams_filter'] ?? [];
+        
+        // v2.19.0: A/B Headline Testing settings - preserve if not in form
+        $ab_submitted = isset($post_data['ab_test_duration']) || isset($post_data['ab_test_metric']);
+        if ($ab_submitted) {
+            $settings['ab_testing_enabled'] = !empty($post_data['ab_testing_enabled']);
+            $settings['ab_test_duration'] = absint($post_data['ab_test_duration'] ?? 24);
+            $settings['ab_test_metric'] = in_array($post_data['ab_test_metric'] ?? 'ctr', ['ctr', 'views', 'engagement']) ? $post_data['ab_test_metric'] : 'ctr';
+            $settings['ab_test_min_views'] = absint($post_data['ab_test_min_views'] ?? 100);
+            $settings['ab_test_auto_select'] = !empty($post_data['ab_test_auto_select']);
+        } else {
+            $settings['ab_testing_enabled'] = $old_settings['ab_testing_enabled'] ?? false;
+            $settings['ab_test_duration'] = $old_settings['ab_test_duration'] ?? 24;
+            $settings['ab_test_metric'] = $old_settings['ab_test_metric'] ?? 'ctr';
+            $settings['ab_test_min_views'] = $old_settings['ab_test_min_views'] ?? 100;
+            $settings['ab_test_auto_select'] = $old_settings['ab_test_auto_select'] ?? true;
+        }
+        
+        // v2.20.0: RSS Feed Output settings - preserve if not in form
+        $rss_submitted = isset($post_data['rss_feeds_enabled']) || isset($post_data['rss_posts_per_feed']) || isset($post_data['rss_feed_categories']);
+        if ($rss_submitted) {
+            $settings['rss_feeds_enabled'] = !empty($post_data['rss_feeds_enabled']);
+            $settings['rss_posts_per_feed'] = absint($post_data['rss_posts_per_feed'] ?? 20);
+            $settings['rss_include_featured_image'] = !empty($post_data['rss_include_featured_image']);
+            $settings['rss_full_content'] = !empty($post_data['rss_full_content']);
+            $settings['rss_feed_categories'] = array_map('absint', $post_data['rss_feed_categories'] ?? []);
+            $settings['rss_feed_teams'] = array_map('sanitize_text_field', $post_data['rss_feed_teams'] ?? []);
+        } else {
+            $settings['rss_feeds_enabled'] = $old_settings['rss_feeds_enabled'] ?? true;
+            $settings['rss_posts_per_feed'] = $old_settings['rss_posts_per_feed'] ?? 20;
+            $settings['rss_include_featured_image'] = $old_settings['rss_include_featured_image'] ?? true;
+            $settings['rss_full_content'] = $old_settings['rss_full_content'] ?? false;
+            $settings['rss_feed_categories'] = $old_settings['rss_feed_categories'] ?? [];
+            $settings['rss_feed_teams'] = $old_settings['rss_feed_teams'] ?? [];
+        }
+        
+        // v2.20.0: Webhooks settings - always preserve (managed via AJAX)
+        $settings['webhooks_enabled'] = isset($post_data['webhooks_enabled']) ? !empty($post_data['webhooks_enabled']) : ($old_settings['webhooks_enabled'] ?? false);
+        $settings['webhooks'] = $old_settings['webhooks'] ?? [];
+        
         // ALWAYS preserve OAuth tokens and Google credentials (never in regular forms)
         // These are managed by dedicated AJAX handlers
         $settings['google_client_id'] = $old_settings['google_client_id'] ?? '';
@@ -18149,16 +18911,6 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
         $team_config = $this->target_teams[$team_key] ?? [];
         $post_url = get_permalink($post->ID);
         
-        $team_hashtags = [
-            'braves' => '#Braves #ForTheA',
-            'falcons' => '#Falcons #RiseUp',
-            'hawks' => '#Hawks #TrueToAtlanta',
-            'united' => '#ATLUTD #UniteAndConquer',
-            'dream' => '#AtlantaDream #DreamOn',
-            'uga' => '#UGA #GoDawgs',
-            'gt' => '#GaTech #TogetherWeSwarm',
-        ];
-        
         if ($platform === 'twitter') {
             $template = $settings['twitter_post_template'] ?? '📰 {headline} #Atlanta #Sports {team_hashtag}';
             $text = str_replace([
@@ -18171,7 +18923,7 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
                 $post->post_title,
                 $post_url,
                 $team_config['name'] ?? '',
-                $team_hashtags[$team_key] ?? '#Atlanta',
+                $this->get_team_hashtags($team_key, 'twitter'),
                 $team_config['league'] ?? '',
             ], $template);
             
@@ -18617,6 +19369,9 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
                     <button type="button" class="flm-period-btn active" data-days="7">7 Days</button>
                     <button type="button" class="flm-period-btn" data-days="14">14 Days</button>
                     <button type="button" class="flm-period-btn" data-days="30">30 Days</button>
+                    <button type="button" id="flm-export-analytics" data-days="30" class="flm-btn flm-btn-sm flm-btn-secondary" style="margin-left:12px;" title="Export as CSV">
+                        <?php echo $this->icon('download'); ?> Export
+                    </button>
                 </div>
             </div>
             
@@ -23378,16 +24133,6 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
             $team_config = $this->target_teams[$team_key] ?? [];
             $tracked_url = $this->build_utm_url($url, 'twitter', $team_key);
             
-            $team_hashtags = [
-                'braves' => '#Braves #ForTheA',
-                'falcons' => '#Falcons #RiseUp',
-                'hawks' => '#Hawks #TrueToAtlanta',
-                'united' => '#ATLUTD #UniteAndConquer',
-                'dream' => '#AtlantaDream #DreamOn',
-                'uga' => '#UGA #GoDawgs',
-                'gt' => '#GaTech #TogetherWeSwarm',
-            ];
-            
             $tweet_text = str_replace([
                 '{headline}',
                 '{url}',
@@ -23398,7 +24143,7 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
                 $text,
                 $tracked_url,
                 $team_config['name'] ?? '',
-                $team_hashtags[$team_key] ?? '#Atlanta',
+                $this->get_team_hashtags($team_key, 'twitter'),
                 $team_config['league'] ?? '',
             ], $template);
             
@@ -23702,6 +24447,11 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
             return ['success' => false, 'error' => 'Image URL required for Instagram'];
         }
         
+        // Ensure image URL is publicly accessible
+        if (strpos($image_url, 'localhost') !== false || strpos($image_url, '127.0.0.1') !== false) {
+            return ['success' => false, 'error' => 'Image must be on a public URL for Instagram'];
+        }
+        
         // Step 1: Create media container
         $container_response = wp_remote_post("https://graph.facebook.com/v18.0/{$instagram_id}/media", [
             'body' => [
@@ -23725,8 +24475,34 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
         
         $container_id = $container_data['id'];
         
-        // Step 2: Wait for media to be ready (Instagram processes the image)
-        sleep(3);
+        // Step 2: Poll for media container status (up to 30 seconds)
+        $max_attempts = 10;
+        $attempt = 0;
+        $is_ready = false;
+        
+        while ($attempt < $max_attempts && !$is_ready) {
+            sleep(3);
+            $attempt++;
+            
+            $status_response = wp_remote_get("https://graph.facebook.com/v18.0/{$container_id}?fields=status_code&access_token={$access_token}", [
+                'timeout' => 30,
+            ]);
+            
+            if (!is_wp_error($status_response)) {
+                $status_data = json_decode(wp_remote_retrieve_body($status_response), true);
+                $status_code = $status_data['status_code'] ?? '';
+                
+                if ($status_code === 'FINISHED') {
+                    $is_ready = true;
+                } elseif ($status_code === 'ERROR') {
+                    return ['success' => false, 'error' => 'Instagram media processing failed'];
+                }
+            }
+        }
+        
+        if (!$is_ready) {
+            return ['success' => false, 'error' => 'Instagram media processing timeout'];
+        }
         
         // Step 3: Publish the media
         $publish_response = wp_remote_post("https://graph.facebook.com/v18.0/{$instagram_id}/media_publish", [
@@ -23782,6 +24558,1403 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
         ];
         
         wp_send_json_success($stats);
+    }
+    
+    // ========================================
+    // NEWSLETTER BUILDER (v2.19.0)
+    // ========================================
+    
+    /**
+     * Preview newsletter content
+     */
+    public function ajax_preview_newsletter() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+        
+        $newsletter = $this->build_newsletter_content();
+        
+        wp_send_json_success([
+            'html' => $newsletter['html'],
+            'plain' => $newsletter['plain'],
+            'story_count' => $newsletter['story_count'],
+            'teams' => $newsletter['teams'],
+        ]);
+    }
+    
+    /**
+     * Send newsletter to subscribers
+     */
+    public function ajax_send_newsletter() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+        
+        $settings = $this->get_settings();
+        $newsletter = $this->build_newsletter_content();
+        
+        if ($newsletter['story_count'] === 0) {
+            wp_send_json_error('No stories to include in newsletter');
+        }
+        
+        // Get subscriber list (integrate with ESP or WordPress users)
+        $subscribers = $this->get_newsletter_subscribers();
+        
+        if (empty($subscribers)) {
+            wp_send_json_error('No subscribers found');
+        }
+        
+        $subject = $this->build_newsletter_subject($settings);
+        $from_name = $settings['newsletter_from_name'] ?: get_bloginfo('name');
+        $from_email = $settings['newsletter_from_email'] ?: get_option('admin_email');
+        
+        $sent = 0;
+        $failed = 0;
+        
+        foreach ($subscribers as $subscriber) {
+            $headers = [
+                'Content-Type: text/html; charset=UTF-8',
+                "From: {$from_name} <{$from_email}>",
+            ];
+            
+            if (!empty($settings['newsletter_reply_to'])) {
+                $headers[] = "Reply-To: {$settings['newsletter_reply_to']}";
+            }
+            
+            $result = wp_mail($subscriber['email'], $subject, $newsletter['html'], $headers);
+            
+            if ($result) {
+                $sent++;
+            } else {
+                $failed++;
+            }
+        }
+        
+        // Update last sent timestamp
+        $settings['newsletter_last_sent'] = current_time('mysql');
+        update_option('flm_settings', $settings);
+        
+        $this->log_activity('newsletter', "Sent newsletter to {$sent} subscribers ({$failed} failed)");
+        
+        wp_send_json_success([
+            'sent' => $sent,
+            'failed' => $failed,
+            'story_count' => $newsletter['story_count'],
+        ]);
+    }
+    
+    /**
+     * Send test newsletter
+     */
+    public function ajax_send_test_newsletter() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+        
+        $test_email = sanitize_email($_POST['email'] ?? '');
+        
+        if (empty($test_email)) {
+            wp_send_json_error('Email address required');
+        }
+        
+        $settings = $this->get_settings();
+        $newsletter = $this->build_newsletter_content();
+        
+        $subject = '[TEST] ' . $this->build_newsletter_subject($settings);
+        $from_name = $settings['newsletter_from_name'] ?: get_bloginfo('name');
+        $from_email = $settings['newsletter_from_email'] ?: get_option('admin_email');
+        
+        $headers = [
+            'Content-Type: text/html; charset=UTF-8',
+            "From: {$from_name} <{$from_email}>",
+        ];
+        
+        $result = wp_mail($test_email, $subject, $newsletter['html'], $headers);
+        
+        if ($result) {
+            wp_send_json_success(['message' => "Test newsletter sent to {$test_email}"]);
+        } else {
+            wp_send_json_error('Failed to send test email. Check your server mail configuration.');
+        }
+    }
+    
+    /**
+     * Build newsletter content
+     */
+    private function build_newsletter_content() {
+        $settings = $this->get_settings();
+        $max_stories = (int)($settings['newsletter_max_stories'] ?? 10);
+        $include_images = !empty($settings['newsletter_include_images']);
+        $teams_filter = $settings['newsletter_teams_filter'] ?? [];
+        
+        // Get recent FLM posts
+        $args = [
+            'post_type' => 'post',
+            'posts_per_page' => $max_stories,
+            'post_status' => 'publish',
+            'meta_query' => [
+                [
+                    'key' => 'flm_story_id',
+                    'compare' => 'EXISTS',
+                ],
+            ],
+            'orderby' => 'date',
+            'order' => 'DESC',
+        ];
+        
+        // Filter by date (last 24 hours for daily, 7 days for weekly)
+        $frequency = $settings['newsletter_frequency'] ?? 'daily';
+        $date_after = $frequency === 'weekly' ? '-7 days' : '-24 hours';
+        $args['date_query'] = [
+            ['after' => $date_after],
+        ];
+        
+        $posts = get_posts($args);
+        
+        // Filter by teams if specified
+        if (!empty($teams_filter)) {
+            $posts = array_filter($posts, function($post) use ($teams_filter) {
+                $team = get_post_meta($post->ID, 'flm_team', true);
+                return in_array($team, $teams_filter);
+            });
+        }
+        
+        // Group by team
+        $stories_by_team = [];
+        foreach ($posts as $post) {
+            $team = get_post_meta($post->ID, 'flm_team', true) ?: 'other';
+            if (!isset($stories_by_team[$team])) {
+                $stories_by_team[$team] = [];
+            }
+            $stories_by_team[$team][] = $post;
+        }
+        
+        // Build HTML
+        $html = $this->render_newsletter_template($stories_by_team, $include_images);
+        $plain = $this->render_newsletter_plain($stories_by_team);
+        
+        return [
+            'html' => $html,
+            'plain' => $plain,
+            'story_count' => count($posts),
+            'teams' => array_keys($stories_by_team),
+        ];
+    }
+    
+    /**
+     * Build newsletter subject line
+     */
+    private function build_newsletter_subject($settings) {
+        $template = $settings['newsletter_subject_template'] ?? '📰 {site_name} Daily Sports Digest - {date}';
+        
+        return str_replace([
+            '{site_name}',
+            '{date}',
+            '{day}',
+        ], [
+            get_bloginfo('name'),
+            date('F j, Y'),
+            date('l'),
+        ], $template);
+    }
+    
+    /**
+     * Get newsletter subscribers
+     */
+    private function get_newsletter_subscribers() {
+        // Option 1: Get from ESP (SendGrid, Aigeon)
+        $settings = $this->get_settings();
+        $esp_provider = $settings['esp_provider'] ?? 'none';
+        
+        if ($esp_provider !== 'none' && !empty($settings['newsletter_list_id'])) {
+            return $this->get_esp_subscribers($esp_provider, $settings['newsletter_list_id']);
+        }
+        
+        // Option 2: Get WordPress users with subscriber role who opted in
+        $users = get_users([
+            'role' => 'subscriber',
+            'meta_key' => 'flm_newsletter_optin',
+            'meta_value' => '1',
+        ]);
+        
+        $subscribers = [];
+        foreach ($users as $user) {
+            $subscribers[] = [
+                'email' => $user->user_email,
+                'name' => $user->display_name,
+            ];
+        }
+        
+        // Option 3: Admin email as fallback for testing
+        if (empty($subscribers)) {
+            $subscribers[] = [
+                'email' => get_option('admin_email'),
+                'name' => 'Admin',
+            ];
+        }
+        
+        return $subscribers;
+    }
+    
+    /**
+     * Render newsletter HTML template
+     */
+    private function render_newsletter_template($stories_by_team, $include_images) {
+        $site_name = get_bloginfo('name');
+        $site_url = home_url();
+        $date = date('F j, Y');
+        
+        $team_colors = [
+            'braves' => '#CE1141',
+            'falcons' => '#A71930',
+            'hawks' => '#E03A3E',
+            'united' => '#80000A',
+            'dream' => '#E31837',
+            'uga' => '#BA0C2F',
+            'gt' => '#B3A369',
+        ];
+        
+        $html = '<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>' . esc_html($site_name) . ' Newsletter</title>
+</head>
+<body style="margin:0;padding:0;background:#f5f5f5;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f5f5;padding:20px 0;">
+        <tr>
+            <td align="center">
+                <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 6px rgba(0,0,0,0.1);">
+                    <!-- Header -->
+                    <tr>
+                        <td style="background:linear-gradient(135deg,#1a1a2e,#16213e);padding:30px;text-align:center;">
+                            <h1 style="margin:0;color:#ffffff;font-size:28px;">📰 ' . esc_html($site_name) . '</h1>
+                            <p style="margin:10px 0 0;color:#a0a0a0;font-size:14px;">Daily Sports Digest • ' . esc_html($date) . '</p>
+                        </td>
+                    </tr>';
+        
+        // Stories by team
+        foreach ($stories_by_team as $team => $posts) {
+            $team_config = $this->target_teams[$team] ?? ['name' => ucfirst($team)];
+            $team_color = $team_colors[$team] ?? '#333333';
+            
+            $html .= '
+                    <!-- ' . esc_html($team_config['name']) . ' -->
+                    <tr>
+                        <td style="padding:20px 30px 10px;">
+                            <h2 style="margin:0;font-size:18px;color:' . $team_color . ';border-bottom:2px solid ' . $team_color . ';padding-bottom:8px;">
+                                ' . esc_html($team_config['name']) . '
+                            </h2>
+                        </td>
+                    </tr>';
+            
+            foreach ($posts as $post) {
+                $thumb = $include_images ? get_the_post_thumbnail_url($post->ID, 'medium') : '';
+                $excerpt = wp_trim_words(get_the_excerpt($post), 25);
+                $url = get_permalink($post->ID);
+                
+                $html .= '
+                    <tr>
+                        <td style="padding:10px 30px;">
+                            <table width="100%" cellpadding="0" cellspacing="0" style="border-bottom:1px solid #eee;padding-bottom:15px;">
+                                <tr>
+                                    ' . ($thumb ? '<td width="120" style="vertical-align:top;padding-right:15px;">
+                                        <a href="' . esc_url($url) . '">
+                                            <img src="' . esc_url($thumb) . '" width="120" style="border-radius:8px;display:block;">
+                                        </a>
+                                    </td>' : '') . '
+                                    <td style="vertical-align:top;">
+                                        <a href="' . esc_url($url) . '" style="color:#1a1a2e;text-decoration:none;font-weight:600;font-size:16px;line-height:1.3;">
+                                            ' . esc_html($post->post_title) . '
+                                        </a>
+                                        <p style="margin:8px 0 0;color:#666;font-size:13px;line-height:1.5;">
+                                            ' . esc_html($excerpt) . '
+                                        </p>
+                                        <a href="' . esc_url($url) . '" style="display:inline-block;margin-top:8px;color:' . $team_color . ';font-size:12px;font-weight:600;text-decoration:none;">
+                                            Read More →
+                                        </a>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>';
+            }
+        }
+        
+        $html .= '
+                    <!-- Footer -->
+                    <tr>
+                        <td style="background:#1a1a2e;padding:25px 30px;text-align:center;">
+                            <p style="margin:0;color:#a0a0a0;font-size:12px;">
+                                You received this because you subscribed to ' . esc_html($site_name) . '.<br>
+                                <a href="' . esc_url($site_url) . '" style="color:#58a6ff;">Visit our website</a>
+                            </p>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>';
+        
+        return $html;
+    }
+    
+    /**
+     * Render plain text version
+     */
+    private function render_newsletter_plain($stories_by_team) {
+        $site_name = get_bloginfo('name');
+        $date = date('F j, Y');
+        
+        $plain = "{$site_name} - Daily Sports Digest\n";
+        $plain .= "{$date}\n";
+        $plain .= str_repeat('=', 50) . "\n\n";
+        
+        foreach ($stories_by_team as $team => $posts) {
+            $team_config = $this->target_teams[$team] ?? ['name' => ucfirst($team)];
+            $plain .= strtoupper($team_config['name']) . "\n";
+            $plain .= str_repeat('-', 30) . "\n";
+            
+            foreach ($posts as $post) {
+                $plain .= "• " . $post->post_title . "\n";
+                $plain .= "  " . get_permalink($post->ID) . "\n\n";
+            }
+        }
+        
+        return $plain;
+    }
+    
+    // ========================================
+    // A/B HEADLINE TESTING (v2.19.0)
+    // ========================================
+    
+    /**
+     * Create A/B test for a post
+     */
+    public function ajax_create_ab_test() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('edit_posts')) {
+            wp_send_json_error('Unauthorized');
+        }
+        
+        $post_id = absint($_POST['post_id'] ?? 0);
+        $headline_a = sanitize_text_field($_POST['headline_a'] ?? '');
+        $headline_b = sanitize_text_field($_POST['headline_b'] ?? '');
+        
+        if (!$post_id || empty($headline_a) || empty($headline_b)) {
+            wp_send_json_error('Post ID and both headlines required');
+        }
+        
+        $post = get_post($post_id);
+        if (!$post) {
+            wp_send_json_error('Post not found');
+        }
+        
+        // Create A/B test record
+        $test_id = uniqid('ab_');
+        $test = [
+            'id' => $test_id,
+            'post_id' => $post_id,
+            'headline_a' => $headline_a,
+            'headline_b' => $headline_b,
+            'original_title' => $post->post_title,
+            'current_variant' => 'a',  // Start with A
+            'started_at' => current_time('mysql'),
+            'stats' => [
+                'a' => ['views' => 0, 'clicks' => 0],
+                'b' => ['views' => 0, 'clicks' => 0],
+            ],
+            'status' => 'running',  // running, completed, cancelled
+            'winner' => null,
+        ];
+        
+        // Save test
+        $tests = get_option('flm_ab_tests', []);
+        $tests[$test_id] = $test;
+        update_option('flm_ab_tests', $tests);
+        
+        // Update post title to variant A
+        wp_update_post([
+            'ID' => $post_id,
+            'post_title' => $headline_a,
+        ]);
+        
+        // Store test reference in post meta
+        update_post_meta($post_id, '_flm_ab_test_id', $test_id);
+        
+        $this->log_activity('ab_test', "Started A/B test for post #{$post_id}: \"{$headline_a}\" vs \"{$headline_b}\"");
+        
+        // Schedule rotation
+        if (!wp_next_scheduled('flm_rotate_ab_headlines')) {
+            wp_schedule_event(time() + 3600, 'hourly', 'flm_rotate_ab_headlines');
+        }
+        
+        wp_send_json_success([
+            'test_id' => $test_id,
+            'message' => 'A/B test started',
+        ]);
+    }
+    
+    /**
+     * Get all A/B tests
+     */
+    public function ajax_get_ab_tests() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('edit_posts')) {
+            wp_send_json_error('Unauthorized');
+        }
+        
+        $tests = get_option('flm_ab_tests', []);
+        
+        // Enrich with post data
+        foreach ($tests as $id => &$test) {
+            $post = get_post($test['post_id']);
+            $test['post_title'] = $post ? $post->post_title : '[Deleted]';
+            $test['post_url'] = $post ? get_permalink($post) : '';
+            
+            // Calculate CTR
+            $test['stats']['a']['ctr'] = $test['stats']['a']['views'] > 0 
+                ? round(($test['stats']['a']['clicks'] / $test['stats']['a']['views']) * 100, 2) 
+                : 0;
+            $test['stats']['b']['ctr'] = $test['stats']['b']['views'] > 0 
+                ? round(($test['stats']['b']['clicks'] / $test['stats']['b']['views']) * 100, 2) 
+                : 0;
+        }
+        
+        wp_send_json_success($tests);
+    }
+    
+    /**
+     * Manually select A/B test winner
+     */
+    public function ajax_select_ab_winner() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('edit_posts')) {
+            wp_send_json_error('Unauthorized');
+        }
+        
+        $test_id = sanitize_text_field($_POST['test_id'] ?? '');
+        $winner = sanitize_text_field($_POST['winner'] ?? '');  // 'a' or 'b'
+        
+        if (empty($test_id) || !in_array($winner, ['a', 'b'])) {
+            wp_send_json_error('Invalid test ID or winner');
+        }
+        
+        $tests = get_option('flm_ab_tests', []);
+        
+        if (!isset($tests[$test_id])) {
+            wp_send_json_error('Test not found');
+        }
+        
+        $test = $tests[$test_id];
+        
+        // Update post with winning headline
+        $winning_headline = $winner === 'a' ? $test['headline_a'] : $test['headline_b'];
+        wp_update_post([
+            'ID' => $test['post_id'],
+            'post_title' => $winning_headline,
+        ]);
+        
+        // Mark test as completed
+        $tests[$test_id]['status'] = 'completed';
+        $tests[$test_id]['winner'] = $winner;
+        $tests[$test_id]['completed_at'] = current_time('mysql');
+        update_option('flm_ab_tests', $tests);
+        
+        // Remove test reference from post
+        delete_post_meta($test['post_id'], '_flm_ab_test_id');
+        
+        $this->log_activity('ab_test', "A/B test completed: Winner is headline " . strtoupper($winner) . " for post #{$test['post_id']}");
+        
+        wp_send_json_success([
+            'message' => 'Winner selected: Headline ' . strtoupper($winner),
+            'winning_headline' => $winning_headline,
+        ]);
+    }
+    
+    /**
+     * Delete A/B test
+     */
+    public function ajax_delete_ab_test() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('edit_posts')) {
+            wp_send_json_error('Unauthorized');
+        }
+        
+        $test_id = sanitize_text_field($_POST['test_id'] ?? '');
+        
+        $tests = get_option('flm_ab_tests', []);
+        
+        if (!isset($tests[$test_id])) {
+            wp_send_json_error('Test not found');
+        }
+        
+        $test = $tests[$test_id];
+        
+        // Restore original title if test was running
+        if ($test['status'] === 'running') {
+            wp_update_post([
+                'ID' => $test['post_id'],
+                'post_title' => $test['original_title'],
+            ]);
+            delete_post_meta($test['post_id'], '_flm_ab_test_id');
+        }
+        
+        unset($tests[$test_id]);
+        update_option('flm_ab_tests', $tests);
+        
+        wp_send_json_success(['message' => 'Test deleted']);
+    }
+    
+    /**
+     * Auto-check and select A/B test winners (cron)
+     */
+    public function check_ab_test_winners() {
+        $settings = $this->get_settings();
+        
+        if (empty($settings['ab_test_auto_select'])) {
+            return;
+        }
+        
+        $tests = get_option('flm_ab_tests', []);
+        $duration_hours = (int)($settings['ab_test_duration'] ?? 24);
+        $min_views = (int)($settings['ab_test_min_views'] ?? 100);
+        $metric = $settings['ab_test_metric'] ?? 'ctr';
+        
+        foreach ($tests as $test_id => $test) {
+            if ($test['status'] !== 'running') {
+                continue;
+            }
+            
+            // Check if test duration has passed
+            $started = strtotime($test['started_at']);
+            $elapsed_hours = (time() - $started) / 3600;
+            
+            if ($elapsed_hours < $duration_hours) {
+                continue;
+            }
+            
+            // Check minimum views
+            $total_views = $test['stats']['a']['views'] + $test['stats']['b']['views'];
+            if ($total_views < $min_views) {
+                continue;
+            }
+            
+            // Determine winner based on metric
+            $score_a = $this->calculate_ab_score($test['stats']['a'], $metric);
+            $score_b = $this->calculate_ab_score($test['stats']['b'], $metric);
+            
+            $winner = $score_a >= $score_b ? 'a' : 'b';
+            
+            // Select winner
+            $_POST['test_id'] = $test_id;
+            $_POST['winner'] = $winner;
+            $_POST['nonce'] = wp_create_nonce('flm_nonce');
+            
+            $this->ajax_select_ab_winner();
+        }
+    }
+    
+    /**
+     * Calculate A/B test score based on metric
+     */
+    private function calculate_ab_score($stats, $metric) {
+        switch ($metric) {
+            case 'ctr':
+                return $stats['views'] > 0 ? ($stats['clicks'] / $stats['views']) : 0;
+            case 'views':
+                return $stats['views'];
+            case 'clicks':
+            case 'engagement':
+                return $stats['clicks'];
+            default:
+                return 0;
+        }
+    }
+    
+    /**
+     * Track A/B test impression
+     */
+    public function track_ab_impression($post_id) {
+        $test_id = get_post_meta($post_id, '_flm_ab_test_id', true);
+        
+        if (empty($test_id)) {
+            return;
+        }
+        
+        $tests = get_option('flm_ab_tests', []);
+        
+        if (!isset($tests[$test_id]) || $tests[$test_id]['status'] !== 'running') {
+            return;
+        }
+        
+        $variant = $tests[$test_id]['current_variant'];
+        $tests[$test_id]['stats'][$variant]['views']++;
+        
+        update_option('flm_ab_tests', $tests);
+    }
+    
+    /**
+     * Track A/B test click
+     */
+    public function track_ab_click($post_id) {
+        $test_id = get_post_meta($post_id, '_flm_ab_test_id', true);
+        
+        if (empty($test_id)) {
+            return;
+        }
+        
+        $tests = get_option('flm_ab_tests', []);
+        
+        if (!isset($tests[$test_id]) || $tests[$test_id]['status'] !== 'running') {
+            return;
+        }
+        
+        $variant = $tests[$test_id]['current_variant'];
+        $tests[$test_id]['stats'][$variant]['clicks']++;
+        
+        update_option('flm_ab_tests', $tests);
+    }
+    
+    // ========================================
+    // AI HEADLINE GENERATOR (v2.20.0)
+    // ========================================
+    
+    /**
+     * Generate alternative headlines using Claude AI
+     */
+    public function ajax_generate_headlines() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('edit_posts')) {
+            wp_send_json_error('Unauthorized');
+        }
+        
+        $headline = sanitize_text_field($_POST['headline'] ?? '');
+        $team = sanitize_text_field($_POST['team'] ?? '');
+        $context = sanitize_textarea_field($_POST['context'] ?? '');
+        
+        if (empty($headline)) {
+            wp_send_json_error('Headline required');
+        }
+        
+        $settings = $this->get_settings();
+        $api_key = $settings['claude_api_key'] ?? '';
+        
+        if (empty($api_key)) {
+            // Return local suggestions if no API key
+            wp_send_json_success([
+                'headlines' => $this->generate_local_headlines($headline, $team),
+                'source' => 'local',
+            ]);
+            return;
+        }
+        
+        $team_name = $this->target_teams[$team]['name'] ?? 'Atlanta sports';
+        
+        $prompt = "You are an expert sports journalist headline writer. Generate 5 alternative headlines for this sports article.
+
+Original headline: \"$headline\"
+Team: $team_name
+" . ($context ? "Context: $context" : "") . "
+
+Requirements:
+- Keep headlines under 70 characters for SEO
+- Make them engaging and click-worthy without being clickbait
+- Vary the styles: some direct, some with questions, some with numbers/stats
+- Maintain accuracy to the original meaning
+- Use active voice
+
+Respond in JSON format only:
+{
+    \"headlines\": [
+        {\"text\": \"<headline 1>\", \"style\": \"direct\", \"chars\": <count>},
+        {\"text\": \"<headline 2>\", \"style\": \"question\", \"chars\": <count>},
+        {\"text\": \"<headline 3>\", \"style\": \"action\", \"chars\": <count>},
+        {\"text\": \"<headline 4>\", \"style\": \"emotional\", \"chars\": <count>},
+        {\"text\": \"<headline 5>\", \"style\": \"seo\", \"chars\": <count>}
+    ],
+    \"analysis\": \"<brief analysis of original headline strengths/weaknesses>\"
+}";
+
+        $response = wp_remote_post($this->integration_endpoints['claude'], [
+            'headers' => [
+                'Content-Type' => 'application/json',
+                'x-api-key' => $api_key,
+                'anthropic-version' => '2023-06-01',
+            ],
+            'body' => json_encode([
+                'model' => 'claude-sonnet-4-20250514',
+                'max_tokens' => 1024,
+                'messages' => [
+                    ['role' => 'user', 'content' => $prompt]
+                ]
+            ]),
+            'timeout' => 30,
+        ]);
+        
+        if (is_wp_error($response)) {
+            wp_send_json_success([
+                'headlines' => $this->generate_local_headlines($headline, $team),
+                'source' => 'local',
+                'error' => $response->get_error_message(),
+            ]);
+            return;
+        }
+        
+        $body = json_decode(wp_remote_retrieve_body($response), true);
+        
+        if (!empty($body['content'][0]['text'])) {
+            $text = $body['content'][0]['text'];
+            if (preg_match('/\{[\s\S]*\}/', $text, $matches)) {
+                $result = json_decode($matches[0], true);
+                if ($result && !empty($result['headlines'])) {
+                    wp_send_json_success([
+                        'headlines' => $result['headlines'],
+                        'analysis' => $result['analysis'] ?? '',
+                        'source' => 'claude',
+                    ]);
+                    return;
+                }
+            }
+        }
+        
+        wp_send_json_success([
+            'headlines' => $this->generate_local_headlines($headline, $team),
+            'source' => 'local',
+        ]);
+    }
+    
+    /**
+     * Generate headlines locally (fallback)
+     */
+    private function generate_local_headlines($headline, $team) {
+        $team_name = $this->target_teams[$team]['name'] ?? 'Atlanta';
+        $headlines = [];
+        
+        // Style 1: Question format
+        $headlines[] = [
+            'text' => 'Can ' . $team_name . ' Keep Up the Momentum? ' . $this->extract_key_phrase($headline),
+            'style' => 'question',
+            'chars' => 0,
+        ];
+        
+        // Style 2: Direct/Breaking
+        $headlines[] = [
+            'text' => 'BREAKING: ' . substr($headline, 0, 60),
+            'style' => 'breaking',
+            'chars' => 0,
+        ];
+        
+        // Style 3: Analysis angle
+        $headlines[] = [
+            'text' => 'Analysis: What This Means for ' . $team_name,
+            'style' => 'analysis',
+            'chars' => 0,
+        ];
+        
+        // Style 4: List format
+        $headlines[] = [
+            'text' => '3 Key Takeaways: ' . substr($headline, 0, 50),
+            'style' => 'list',
+            'chars' => 0,
+        ];
+        
+        // Style 5: Fan perspective
+        $headlines[] = [
+            'text' => $team_name . ' Fans React: ' . substr($headline, 0, 45),
+            'style' => 'fan',
+            'chars' => 0,
+        ];
+        
+        // Calculate character counts
+        foreach ($headlines as &$h) {
+            $h['chars'] = strlen($h['text']);
+        }
+        
+        return $headlines;
+    }
+    
+    /**
+     * Extract key phrase from headline
+     */
+    private function extract_key_phrase($headline) {
+        // Remove common words and extract meaningful phrase
+        $words = explode(' ', $headline);
+        $filtered = array_filter($words, function($w) {
+            return strlen($w) > 3 && !in_array(strtolower($w), ['the', 'and', 'for', 'with', 'from', 'that', 'this', 'have', 'will']);
+        });
+        return implode(' ', array_slice($filtered, 0, 5));
+    }
+    
+    // ========================================
+    // RSS FEED OUTPUT (v2.20.0)
+    // ========================================
+    
+    /**
+     * Register custom RSS feeds
+     */
+    public function register_custom_feeds() {
+        $settings = $this->get_settings();
+        
+        if (empty($settings['rss_feeds_enabled'])) {
+            return;
+        }
+        
+        // Register team feeds
+        foreach ($this->target_teams as $key => $team) {
+            add_feed('flm-' . $key, function() use ($key) {
+                $this->render_custom_feed('team', $key);
+            });
+        }
+        
+        // Register category feeds  
+        $categories = $settings['rss_feed_categories'] ?? [];
+        foreach ($categories as $cat_id) {
+            $cat = get_category($cat_id);
+            if ($cat) {
+                add_feed('flm-cat-' . $cat->slug, function() use ($cat_id) {
+                    $this->render_custom_feed('category', $cat_id);
+                });
+            }
+        }
+        
+        // Register special feeds
+        add_feed('flm-latest', function() {
+            $this->render_custom_feed('latest', null);
+        });
+        
+        add_feed('flm-breaking', function() {
+            $this->render_custom_feed('breaking', null);
+        });
+    }
+    
+    /**
+     * Render custom RSS feed
+     */
+    private function render_custom_feed($type, $value) {
+        $settings = $this->get_settings();
+        $per_page = (int)($settings['rss_posts_per_feed'] ?? 20);
+        $include_image = !empty($settings['rss_include_featured_image']);
+        $full_content = !empty($settings['rss_full_content']);
+        
+        $args = [
+            'post_type' => 'post',
+            'post_status' => 'publish',
+            'posts_per_page' => $per_page,
+            'meta_query' => [
+                ['key' => 'flm_story_id', 'compare' => 'EXISTS'],
+            ],
+        ];
+        
+        $feed_title = get_bloginfo('name') . ' - ';
+        
+        switch ($type) {
+            case 'team':
+                $args['meta_query'][] = ['key' => 'flm_team', 'value' => $value];
+                $team = $this->target_teams[$value] ?? [];
+                $feed_title .= ($team['name'] ?? ucfirst($value)) . ' Feed';
+                break;
+                
+            case 'category':
+                $args['cat'] = $value;
+                $cat = get_category($value);
+                $feed_title .= ($cat ? $cat->name : 'Category') . ' Feed';
+                break;
+                
+            case 'breaking':
+                $args['meta_query'][] = ['key' => 'flm_is_breaking', 'value' => '1'];
+                $feed_title .= 'Breaking News';
+                break;
+                
+            case 'latest':
+            default:
+                $feed_title .= 'Latest Sports';
+                break;
+        }
+        
+        $posts = get_posts($args);
+        
+        header('Content-Type: application/rss+xml; charset=UTF-8');
+        echo '<?xml version="1.0" encoding="UTF-8"?>' . "\n";
+        ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/">
+<channel>
+    <title><?php echo esc_html($feed_title); ?></title>
+    <link><?php echo esc_url(home_url()); ?></link>
+    <description><?php echo esc_html(get_bloginfo('description')); ?></description>
+    <language><?php echo esc_html(get_bloginfo('language')); ?></language>
+    <lastBuildDate><?php echo mysql2date('D, d M Y H:i:s +0000', get_lastpostmodified('GMT'), false); ?></lastBuildDate>
+    <atom:link href="<?php echo esc_url($_SERVER['REQUEST_URI']); ?>" rel="self" type="application/rss+xml"/>
+    <?php foreach ($posts as $post): 
+        $thumb = get_the_post_thumbnail_url($post->ID, 'large');
+        $team = get_post_meta($post->ID, 'flm_team', true);
+        $byline = get_post_meta($post->ID, 'flm_byline', true);
+    ?>
+    <item>
+        <title><?php echo esc_html($post->post_title); ?></title>
+        <link><?php echo esc_url(get_permalink($post->ID)); ?></link>
+        <guid isPermaLink="true"><?php echo esc_url(get_permalink($post->ID)); ?></guid>
+        <pubDate><?php echo mysql2date('D, d M Y H:i:s +0000', $post->post_date_gmt, false); ?></pubDate>
+        <?php if ($byline): ?>
+        <author><?php echo esc_html($byline); ?></author>
+        <?php endif; ?>
+        <description><![CDATA[<?php echo $full_content ? apply_filters('the_content', $post->post_content) : wp_trim_words($post->post_content, 55); ?>]]></description>
+        <?php if ($include_image && $thumb): ?>
+        <media:content url="<?php echo esc_url($thumb); ?>" medium="image"/>
+        <enclosure url="<?php echo esc_url($thumb); ?>" type="image/jpeg"/>
+        <?php endif; ?>
+        <?php if ($team): ?>
+        <category><?php echo esc_html($this->target_teams[$team]['name'] ?? ucfirst($team)); ?></category>
+        <?php endif; ?>
+    </item>
+    <?php endforeach; ?>
+</channel>
+</rss>
+        <?php
+        exit;
+    }
+    
+    /**
+     * Get available RSS feeds for settings UI
+     */
+    public function ajax_get_rss_feeds() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+        
+        $settings = $this->get_settings();
+        $feeds = [];
+        
+        // Team feeds
+        foreach ($this->target_teams as $key => $team) {
+            $feeds[] = [
+                'type' => 'team',
+                'key' => $key,
+                'name' => $team['name'],
+                'url' => home_url('/feed/flm-' . $key . '/'),
+                'enabled' => in_array($key, $settings['rss_feed_teams'] ?? []),
+            ];
+        }
+        
+        // Category feeds
+        $categories = get_categories(['hide_empty' => false]);
+        foreach ($categories as $cat) {
+            $feeds[] = [
+                'type' => 'category',
+                'key' => $cat->term_id,
+                'name' => $cat->name,
+                'url' => home_url('/feed/flm-cat-' . $cat->slug . '/'),
+                'enabled' => in_array($cat->term_id, $settings['rss_feed_categories'] ?? []),
+            ];
+        }
+        
+        // Special feeds
+        $feeds[] = [
+            'type' => 'special',
+            'key' => 'latest',
+            'name' => 'Latest Stories',
+            'url' => home_url('/feed/flm-latest/'),
+            'enabled' => true,
+        ];
+        
+        $feeds[] = [
+            'type' => 'special',
+            'key' => 'breaking',
+            'name' => 'Breaking News',
+            'url' => home_url('/feed/flm-breaking/'),
+            'enabled' => true,
+        ];
+        
+        wp_send_json_success([
+            'feeds' => $feeds,
+            'settings' => [
+                'enabled' => !empty($settings['rss_feeds_enabled']),
+                'posts_per_feed' => $settings['rss_posts_per_feed'] ?? 20,
+                'include_image' => !empty($settings['rss_include_featured_image']),
+                'full_content' => !empty($settings['rss_full_content']),
+            ],
+        ]);
+    }
+    
+    /**
+     * Save RSS feed settings
+     */
+    public function ajax_save_rss_settings() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+        
+        $settings = $this->get_settings();
+        
+        $settings['rss_feeds_enabled'] = !empty($_POST['enabled']);
+        $settings['rss_feed_teams'] = array_map('sanitize_text_field', $_POST['teams'] ?? []);
+        $settings['rss_feed_categories'] = array_map('absint', $_POST['categories'] ?? []);
+        $settings['rss_posts_per_feed'] = absint($_POST['posts_per_feed'] ?? 20);
+        $settings['rss_include_featured_image'] = !empty($_POST['include_image']);
+        $settings['rss_full_content'] = !empty($_POST['full_content']);
+        
+        update_option('flm_settings', $settings);
+        
+        // Flush rewrite rules to register new feeds
+        flush_rewrite_rules();
+        
+        $this->log_activity('settings', 'Updated RSS feed settings');
+        
+        wp_send_json_success(['message' => 'RSS settings saved']);
+    }
+    
+    // ========================================
+    // WEBHOOK INTEGRATIONS (v2.20.0)
+    // ========================================
+    
+    /**
+     * Get configured webhooks
+     */
+    public function ajax_get_webhooks() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+        
+        $settings = $this->get_settings();
+        $webhooks = $settings['webhooks'] ?? [];
+        
+        // Add available events
+        $events = [
+            'post_imported' => 'New Post Imported',
+            'post_published' => 'Post Published',
+            'breaking_news' => 'Breaking News Detected',
+            'import_completed' => 'Import Run Completed',
+            'social_posted' => 'Social Media Posted',
+            'ab_test_winner' => 'A/B Test Winner Selected',
+        ];
+        
+        wp_send_json_success([
+            'webhooks' => $webhooks,
+            'events' => $events,
+            'enabled' => !empty($settings['webhooks_enabled']),
+        ]);
+    }
+    
+    /**
+     * Save a webhook
+     */
+    public function ajax_save_webhook() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+        
+        $id = sanitize_text_field($_POST['id'] ?? '');
+        $name = sanitize_text_field($_POST['name'] ?? 'Webhook');
+        $url = esc_url_raw($_POST['url'] ?? '');
+        $events = array_map('sanitize_text_field', $_POST['events'] ?? []);
+        $enabled = !empty($_POST['enabled']);
+        $secret = sanitize_text_field($_POST['secret'] ?? '');
+        
+        if (empty($url)) {
+            wp_send_json_error('Webhook URL required');
+        }
+        
+        if (empty($events)) {
+            wp_send_json_error('At least one event required');
+        }
+        
+        $settings = $this->get_settings();
+        $webhooks = $settings['webhooks'] ?? [];
+        
+        // Generate ID if new
+        if (empty($id)) {
+            $id = 'wh_' . uniqid();
+        }
+        
+        $webhooks[$id] = [
+            'id' => $id,
+            'name' => $name,
+            'url' => $url,
+            'events' => $events,
+            'enabled' => $enabled,
+            'secret' => $secret,
+            'created_at' => $webhooks[$id]['created_at'] ?? current_time('mysql'),
+            'updated_at' => current_time('mysql'),
+            'last_triggered' => $webhooks[$id]['last_triggered'] ?? null,
+            'trigger_count' => $webhooks[$id]['trigger_count'] ?? 0,
+        ];
+        
+        $settings['webhooks'] = $webhooks;
+        $settings['webhooks_enabled'] = true;
+        update_option('flm_settings', $settings);
+        
+        $this->log_activity('webhook', "Saved webhook: {$name}");
+        
+        wp_send_json_success([
+            'webhook' => $webhooks[$id],
+            'message' => 'Webhook saved',
+        ]);
+    }
+    
+    /**
+     * Delete a webhook
+     */
+    public function ajax_delete_webhook() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+        
+        $id = sanitize_text_field($_POST['id'] ?? '');
+        
+        $settings = $this->get_settings();
+        $webhooks = $settings['webhooks'] ?? [];
+        
+        if (isset($webhooks[$id])) {
+            $name = $webhooks[$id]['name'];
+            unset($webhooks[$id]);
+            $settings['webhooks'] = $webhooks;
+            update_option('flm_settings', $settings);
+            
+            $this->log_activity('webhook', "Deleted webhook: {$name}");
+            wp_send_json_success(['message' => 'Webhook deleted']);
+        }
+        
+        wp_send_json_error('Webhook not found');
+    }
+    
+    /**
+     * Test a webhook
+     */
+    public function ajax_test_webhook() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+        
+        $id = sanitize_text_field($_POST['id'] ?? '');
+        
+        $settings = $this->get_settings();
+        $webhooks = $settings['webhooks'] ?? [];
+        
+        if (!isset($webhooks[$id])) {
+            wp_send_json_error('Webhook not found');
+        }
+        
+        $webhook = $webhooks[$id];
+        
+        $payload = [
+            'event' => 'test',
+            'timestamp' => current_time('c'),
+            'site_url' => home_url(),
+            'site_name' => get_bloginfo('name'),
+            'webhook_id' => $id,
+            'webhook_name' => $webhook['name'],
+            'test' => true,
+            'message' => 'This is a test webhook from FLM GameDay Atlanta',
+        ];
+        
+        $result = $this->send_webhook($webhook, $payload);
+        
+        if ($result['success']) {
+            wp_send_json_success([
+                'message' => 'Test webhook sent successfully',
+                'response_code' => $result['code'],
+            ]);
+        } else {
+            wp_send_json_error('Webhook failed: ' . $result['error']);
+        }
+    }
+    
+    /**
+     * Send webhook request
+     */
+    private function send_webhook($webhook, $payload) {
+        $headers = [
+            'Content-Type' => 'application/json',
+            'User-Agent' => 'FLM-GameDay-Atlanta/' . $this->version,
+            'X-FLM-Event' => $payload['event'] ?? 'unknown',
+            'X-FLM-Delivery' => uniqid('flm_'),
+        ];
+        
+        // Add signature if secret is set
+        if (!empty($webhook['secret'])) {
+            $signature = hash_hmac('sha256', json_encode($payload), $webhook['secret']);
+            $headers['X-FLM-Signature'] = 'sha256=' . $signature;
+        }
+        
+        $response = wp_remote_post($webhook['url'], [
+            'headers' => $headers,
+            'body' => json_encode($payload),
+            'timeout' => 15,
+        ]);
+        
+        if (is_wp_error($response)) {
+            return ['success' => false, 'error' => $response->get_error_message()];
+        }
+        
+        $code = wp_remote_retrieve_response_code($response);
+        
+        // Update webhook stats
+        $settings = $this->get_settings();
+        if (isset($settings['webhooks'][$webhook['id']])) {
+            $settings['webhooks'][$webhook['id']]['last_triggered'] = current_time('mysql');
+            $settings['webhooks'][$webhook['id']]['trigger_count']++;
+            update_option('flm_settings', $settings);
+        }
+        
+        if ($code >= 200 && $code < 300) {
+            return ['success' => true, 'code' => $code];
+        }
+        
+        return ['success' => false, 'error' => "HTTP {$code}", 'code' => $code];
+    }
+    
+    /**
+     * Trigger webhooks for post imported event
+     */
+    public function trigger_webhook_post_imported($post_id, $story) {
+        $this->trigger_webhooks('post_imported', [
+            'post_id' => $post_id,
+            'post_url' => get_permalink($post_id),
+            'title' => get_the_title($post_id),
+            'story_id' => $story['storyId'] ?? '',
+            'team' => get_post_meta($post_id, 'flm_team', true),
+            'type' => $story['storyType'] ?? '',
+        ]);
+    }
+    
+    /**
+     * Trigger webhooks for breaking news event
+     */
+    public function trigger_webhook_breaking_news($story) {
+        $this->trigger_webhooks('breaking_news', [
+            'headline' => $story['headline'] ?? '',
+            'story_id' => $story['storyId'] ?? '',
+            'team' => $story['team'] ?? '',
+        ]);
+    }
+    
+    /**
+     * Trigger all matching webhooks for an event
+     */
+    private function trigger_webhooks($event, $data) {
+        $settings = $this->get_settings();
+        
+        if (empty($settings['webhooks_enabled'])) {
+            return;
+        }
+        
+        $webhooks = $settings['webhooks'] ?? [];
+        
+        foreach ($webhooks as $webhook) {
+            if (empty($webhook['enabled'])) {
+                continue;
+            }
+            
+            if (!in_array($event, $webhook['events'] ?? [])) {
+                continue;
+            }
+            
+            $payload = array_merge([
+                'event' => $event,
+                'timestamp' => current_time('c'),
+                'site_url' => home_url(),
+                'site_name' => get_bloginfo('name'),
+            ], $data);
+            
+            // Fire async if possible
+            wp_schedule_single_event(time(), 'flm_send_webhook_async', [$webhook, $payload]);
+        }
+    }
+    
+    // ========================================
+    // ENHANCED ANALYTICS EXPORT (v2.20.0)
+    // ========================================
+    
+    /**
+     * Export analytics data as CSV
+     */
+    public function ajax_export_analytics() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+        
+        $days = absint($_POST['days'] ?? 30);
+        $format = sanitize_text_field($_POST['format'] ?? 'csv');
+        
+        $data = $this->get_analytics_data($days);
+        
+        if ($format === 'json') {
+            wp_send_json_success($data);
+            return;
+        }
+        
+        // Build CSV
+        $csv = "FLM GameDay Atlanta - Analytics Export\n";
+        $csv .= "Generated: " . current_time('mysql') . "\n";
+        $csv .= "Period: Last {$days} days\n\n";
+        
+        // Summary
+        $csv .= "SUMMARY\n";
+        $csv .= "Total Posts,{$data['total_posts']}\n";
+        $csv .= "Total Views,{$data['total_views']}\n";
+        $csv .= "Views This Period,{$data['views_period']}\n";
+        $csv .= "Avg Views/Post,{$data['avg_views_per_post']}\n";
+        $csv .= "Success Rate,{$data['success_rate']}%\n\n";
+        
+        // Daily activity
+        $csv .= "DAILY ACTIVITY\n";
+        $csv .= "Date,Posts\n";
+        for ($i = 0; $i < count($data['activity_labels']); $i++) {
+            $csv .= "{$data['activity_labels'][$i]},{$data['activity_data'][$i]}\n";
+        }
+        $csv .= "\n";
+        
+        // Team breakdown
+        $csv .= "BY TEAM\n";
+        $csv .= "Team,Posts,Views\n";
+        foreach ($data['team_data'] as $team => $count) {
+            $views = $data['views_by_team'][$team] ?? 0;
+            $csv .= ucfirst($team) . ",{$count},{$views}\n";
+        }
+        $csv .= "\n";
+        
+        // Top posts
+        if (!empty($data['top_posts'])) {
+            $csv .= "TOP POSTS\n";
+            $csv .= "Title,Views,Team,Date\n";
+            foreach ($data['top_posts'] as $post) {
+                $title = str_replace(',', ' ', $post['title']);
+                $csv .= "\"{$title}\",{$post['views']},{$post['team']},{$post['date']}\n";
+            }
+        }
+        
+        wp_send_json_success([
+            'csv' => $csv,
+            'filename' => 'flm-analytics-' . date('Y-m-d') . '.csv',
+        ]);
     }
     
     // ========================================
@@ -25082,6 +27255,460 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
                                 </div>
                             </div>
                             
+                            <!-- Newsletter Builder (v2.19.0) -->
+                            <div class="flm-card" style="margin-top:24px;">
+                                <div class="flm-card-header">
+                                    <h2 class="flm-card-title">
+                                        <span class="flm-card-icon" style="background:linear-gradient(135deg, #6366f1, #8b5cf6);">
+                                            <?php echo $this->icon('mail'); ?>
+                                        </span>
+                                        Newsletter Builder
+                                        <span class="flm-badge" style="background:rgba(139,92,246,0.15);color:#8b5cf6;margin-left:8px;">v2.19.0</span>
+                                    </h2>
+                                </div>
+                                <div class="flm-card-body">
+                                    <p style="margin:0 0 20px;color:var(--flm-text-muted);">
+                                        Automatically compile and send email digests with your imported sports content.
+                                    </p>
+                                    
+                                    <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(280px, 1fr));gap:20px;">
+                                        <!-- Settings -->
+                                        <div style="background:var(--flm-bg-input);border-radius:12px;padding:20px;border:1px solid var(--flm-border);">
+                                            <h4 style="margin:0 0 16px;font-size:13px;font-weight:600;color:var(--flm-text);display:flex;align-items:center;gap:8px;">
+                                                ⚙️ Settings
+                                            </h4>
+                                            
+                                            <div class="flm-form-group" style="margin:0 0 12px;">
+                                                <label class="flm-label">Frequency</label>
+                                                <select name="flm_settings[newsletter_frequency]" class="flm-select">
+                                                    <option value="daily" <?php selected($settings['newsletter_frequency'] ?? 'daily', 'daily'); ?>>Daily Digest</option>
+                                                    <option value="weekly" <?php selected($settings['newsletter_frequency'] ?? 'daily', 'weekly'); ?>>Weekly Roundup</option>
+                                                </select>
+                                            </div>
+                                            
+                                            <div class="flm-form-group" style="margin:0 0 12px;">
+                                                <label class="flm-label">Send Time</label>
+                                                <input type="time" name="flm_settings[newsletter_send_time]" class="flm-input" value="<?php echo esc_attr($settings['newsletter_send_time'] ?? '08:00'); ?>">
+                                            </div>
+                                            
+                                            <div class="flm-form-group" style="margin:0 0 12px;">
+                                                <label class="flm-label">Max Stories</label>
+                                                <input type="number" name="flm_settings[newsletter_max_stories]" class="flm-input" value="<?php echo esc_attr($settings['newsletter_max_stories'] ?? 10); ?>" min="1" max="50">
+                                            </div>
+                                            
+                                            <label class="flm-toggle" style="margin:0;">
+                                                <input type="checkbox" name="flm_settings[newsletter_include_images]" value="1" <?php checked(!empty($settings['newsletter_include_images'])); ?>>
+                                                <span class="flm-toggle-switch"></span>
+                                                <span class="flm-toggle-label">Include images</span>
+                                            </label>
+                                        </div>
+                                        
+                                        <!-- Email Settings -->
+                                        <div style="background:var(--flm-bg-input);border-radius:12px;padding:20px;border:1px solid var(--flm-border);">
+                                            <h4 style="margin:0 0 16px;font-size:13px;font-weight:600;color:var(--flm-text);display:flex;align-items:center;gap:8px;">
+                                                📧 Email Details
+                                            </h4>
+                                            
+                                            <div class="flm-form-group" style="margin:0 0 12px;">
+                                                <label class="flm-label">Subject Line</label>
+                                                <input type="text" name="flm_settings[newsletter_subject_template]" class="flm-input" value="<?php echo esc_attr($settings['newsletter_subject_template'] ?? '📰 {site_name} Daily Sports Digest - {date}'); ?>" placeholder="📰 {site_name} Daily Sports Digest - {date}">
+                                                <p class="flm-label-hint">Variables: {site_name}, {date}, {day}</p>
+                                            </div>
+                                            
+                                            <div class="flm-form-group" style="margin:0 0 12px;">
+                                                <label class="flm-label">From Name</label>
+                                                <input type="text" name="flm_settings[newsletter_from_name]" class="flm-input" value="<?php echo esc_attr($settings['newsletter_from_name'] ?? ''); ?>" placeholder="<?php echo esc_attr(get_bloginfo('name')); ?>">
+                                            </div>
+                                            
+                                            <div class="flm-form-group" style="margin:0;">
+                                                <label class="flm-label">From Email</label>
+                                                <input type="email" name="flm_settings[newsletter_from_email]" class="flm-input" value="<?php echo esc_attr($settings['newsletter_from_email'] ?? ''); ?>" placeholder="<?php echo esc_attr(get_option('admin_email')); ?>">
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Actions -->
+                                    <div style="margin-top:20px;display:flex;gap:12px;flex-wrap:wrap;">
+                                        <button type="button" class="flm-btn flm-btn-secondary" id="flm-preview-newsletter">
+                                            <?php echo $this->icon('eye'); ?> Preview Newsletter
+                                        </button>
+                                        <button type="button" class="flm-btn flm-btn-secondary" id="flm-send-test-newsletter">
+                                            <?php echo $this->icon('mail'); ?> Send Test
+                                        </button>
+                                        <button type="button" class="flm-btn flm-btn-primary" id="flm-send-newsletter">
+                                            <?php echo $this->icon('send'); ?> Send Now
+                                        </button>
+                                    </div>
+                                    
+                                    <!-- Preview Area -->
+                                    <div id="flm-newsletter-preview" style="display:none;margin-top:20px;background:var(--flm-bg);border-radius:12px;padding:20px;border:1px solid var(--flm-border);">
+                                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+                                            <h4 style="margin:0;font-size:13px;color:var(--flm-text);">Newsletter Preview</h4>
+                                            <button type="button" class="flm-btn flm-btn-secondary flm-btn-sm" id="flm-close-newsletter-preview">
+                                                ✕ Close
+                                            </button>
+                                        </div>
+                                        <div id="flm-newsletter-preview-content" style="background:white;border-radius:8px;max-height:500px;overflow:auto;"></div>
+                                    </div>
+                                    
+                                    <?php if (!empty($settings['newsletter_last_sent'])): ?>
+                                    <p style="margin:16px 0 0;font-size:12px;color:var(--flm-text-muted);">
+                                        Last sent: <?php echo esc_html($settings['newsletter_last_sent']); ?>
+                                    </p>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
+                            
+                            <!-- A/B Headline Testing (v2.19.0) -->
+                            <div class="flm-card" style="margin-top:24px;">
+                                <div class="flm-card-header">
+                                    <h2 class="flm-card-title">
+                                        <span class="flm-card-icon" style="background:linear-gradient(135deg, #f59e0b, #d97706);">
+                                            <?php echo $this->icon('chart'); ?>
+                                        </span>
+                                        A/B Headline Testing
+                                        <span class="flm-badge" style="background:rgba(245,158,11,0.15);color:#f59e0b;margin-left:8px;">v2.19.0</span>
+                                    </h2>
+                                </div>
+                                <div class="flm-card-body">
+                                    <p style="margin:0 0 20px;color:var(--flm-text-muted);">
+                                        Test two headlines and automatically select the winner based on performance.
+                                    </p>
+                                    
+                                    <!-- Create New Test -->
+                                    <div style="background:var(--flm-bg-input);border-radius:12px;padding:20px;border:1px solid var(--flm-border);margin-bottom:20px;">
+                                        <h4 style="margin:0 0 16px;font-size:13px;font-weight:600;color:var(--flm-text);">Create New Test</h4>
+                                        
+                                        <div class="flm-form-group" style="margin:0 0 12px;">
+                                            <label class="flm-label">Select Post</label>
+                                            <select id="flm-ab-post-select" class="flm-select">
+                                                <option value="">Choose a post...</option>
+                                                <?php
+                                                $recent_posts = get_posts([
+                                                    'post_type' => 'post',
+                                                    'posts_per_page' => 20,
+                                                    'post_status' => 'publish',
+                                                    'meta_query' => [
+                                                        'relation' => 'AND',
+                                                        [
+                                                            'key' => 'flm_story_id',
+                                                            'compare' => 'EXISTS',
+                                                        ],
+                                                        [
+                                                            'key' => '_flm_ab_test_id',
+                                                            'compare' => 'NOT EXISTS',
+                                                        ],
+                                                    ],
+                                                ]);
+                                                foreach ($recent_posts as $post):
+                                                ?>
+                                                <option value="<?php echo $post->ID; ?>" data-title="<?php echo esc_attr($post->post_title); ?>">
+                                                    <?php echo esc_html(wp_trim_words($post->post_title, 10)); ?>
+                                                </option>
+                                                <?php endforeach; ?>
+                                            </select>
+                                        </div>
+                                        
+                                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                                            <div class="flm-form-group" style="margin:0;">
+                                                <label class="flm-label">Headline A</label>
+                                                <input type="text" id="flm-ab-headline-a" class="flm-input" placeholder="Original headline">
+                                            </div>
+                                            <div class="flm-form-group" style="margin:0;">
+                                                <label class="flm-label">Headline B</label>
+                                                <input type="text" id="flm-ab-headline-b" class="flm-input" placeholder="Alternative headline">
+                                            </div>
+                                        </div>
+                                        
+                                        <button type="button" class="flm-btn flm-btn-primary" id="flm-create-ab-test" style="margin-top:16px;">
+                                            <?php echo $this->icon('bolt'); ?> Start A/B Test
+                                        </button>
+                                    </div>
+                                    
+                                    <!-- Active Tests -->
+                                    <div id="flm-ab-tests-container">
+                                        <h4 style="margin:0 0 16px;font-size:13px;font-weight:600;color:var(--flm-text);">Active Tests</h4>
+                                        <div id="flm-ab-tests-list" style="display:grid;gap:12px;">
+                                            <p style="color:var(--flm-text-muted);font-size:13px;margin:0;">Loading tests...</p>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Settings -->
+                                    <div style="margin-top:20px;padding:16px;background:var(--flm-bg);border-radius:12px;border:1px solid var(--flm-border);">
+                                        <h4 style="margin:0 0 12px;font-size:13px;font-weight:600;color:var(--flm-text);">Test Settings</h4>
+                                        <div style="display:flex;flex-wrap:wrap;gap:16px;">
+                                            <div class="flm-form-group" style="margin:0;flex:1;min-width:150px;">
+                                                <label class="flm-label">Test Duration</label>
+                                                <select name="flm_settings[ab_test_duration]" class="flm-select">
+                                                    <option value="12" <?php selected($settings['ab_test_duration'] ?? 24, 12); ?>>12 hours</option>
+                                                    <option value="24" <?php selected($settings['ab_test_duration'] ?? 24, 24); ?>>24 hours</option>
+                                                    <option value="48" <?php selected($settings['ab_test_duration'] ?? 24, 48); ?>>48 hours</option>
+                                                    <option value="72" <?php selected($settings['ab_test_duration'] ?? 24, 72); ?>>72 hours</option>
+                                                </select>
+                                            </div>
+                                            <div class="flm-form-group" style="margin:0;flex:1;min-width:150px;">
+                                                <label class="flm-label">Winning Metric</label>
+                                                <select name="flm_settings[ab_test_metric]" class="flm-select">
+                                                    <option value="ctr" <?php selected($settings['ab_test_metric'] ?? 'ctr', 'ctr'); ?>>Click-Through Rate</option>
+                                                    <option value="views" <?php selected($settings['ab_test_metric'] ?? 'ctr', 'views'); ?>>Total Views</option>
+                                                    <option value="engagement" <?php selected($settings['ab_test_metric'] ?? 'ctr', 'engagement'); ?>>Engagement</option>
+                                                </select>
+                                            </div>
+                                            <div class="flm-form-group" style="margin:0;flex:1;min-width:150px;">
+                                                <label class="flm-label">Min. Views</label>
+                                                <input type="number" name="flm_settings[ab_test_min_views]" class="flm-input" value="<?php echo esc_attr($settings['ab_test_min_views'] ?? 100); ?>" min="10">
+                                            </div>
+                                        </div>
+                                        <label class="flm-toggle" style="margin-top:12px;">
+                                            <input type="checkbox" name="flm_settings[ab_test_auto_select]" value="1" <?php checked($settings['ab_test_auto_select'] ?? true); ?>>
+                                            <span class="flm-toggle-switch"></span>
+                                            <span class="flm-toggle-label">Auto-select winner when criteria met</span>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- RSS Feeds (v2.20.0) -->
+                            <div class="flm-card" style="margin-top:24px;">
+                                <div class="flm-card-header">
+                                    <h2 class="flm-card-title">
+                                        <span class="flm-card-icon" style="background:linear-gradient(135deg,#f97316,#ea580c);">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 11a9 9 0 019 9M4 4a16 16 0 0116 16"/><circle cx="5" cy="19" r="1"/></svg>
+                                        </span>
+                                        RSS Feed Output
+                                        <span class="flm-badge" style="background:rgba(249,115,22,0.15);color:#f97316;margin-left:8px;">v2.20</span>
+                                    </h2>
+                                    <label class="flm-toggle">
+                                        <input type="checkbox" name="flm_settings[rss_feeds_enabled]" value="1" id="flm-rss-enabled" <?php checked($settings['rss_feeds_enabled'] ?? true); ?>>
+                                        <span class="flm-toggle-switch"></span>
+                                    </label>
+                                </div>
+                                <div class="flm-card-body">
+                                    <p style="color:var(--flm-text-muted);font-size:13px;margin:0 0 16px;">
+                                        Create custom RSS feeds for syndication. Select which categories to expose as feeds.
+                                    </p>
+                                    
+                                    <!-- Feed Settings -->
+                                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:20px;">
+                                        <div class="flm-form-group" style="margin:0;">
+                                            <label class="flm-label">Posts Per Feed</label>
+                                            <input type="number" name="flm_settings[rss_posts_per_feed]" class="flm-input" value="<?php echo esc_attr($settings['rss_posts_per_feed'] ?? 20); ?>" min="5" max="100">
+                                        </div>
+                                        <div class="flm-form-group" style="margin:0;">
+                                            <label class="flm-label">Content</label>
+                                            <select name="flm_settings[rss_full_content]" class="flm-select">
+                                                <option value="0" <?php selected(empty($settings['rss_full_content'])); ?>>Excerpt Only</option>
+                                                <option value="1" <?php selected(!empty($settings['rss_full_content'])); ?>>Full Content</option>
+                                            </select>
+                                        </div>
+                                        <label class="flm-toggle" style="align-self:end;margin-bottom:8px;">
+                                            <input type="checkbox" name="flm_settings[rss_include_featured_image]" value="1" <?php checked($settings['rss_include_featured_image'] ?? true); ?>>
+                                            <span class="flm-toggle-switch"></span>
+                                            <span class="flm-toggle-label">Include Images</span>
+                                        </label>
+                                    </div>
+                                    
+                                    <!-- Category Selection -->
+                                    <div style="margin-bottom:20px;">
+                                        <label class="flm-label">Category Feeds</label>
+                                        <p style="font-size:12px;color:var(--flm-text-muted);margin:0 0 12px;">Select categories to create RSS feeds for:</p>
+                                        <div id="flm-rss-categories" style="display:flex;flex-wrap:wrap;gap:8px;">
+                                            <?php 
+                                            $rss_categories = $settings['rss_feed_categories'] ?? [];
+                                            foreach ($categories as $cat): 
+                                            $is_enabled = in_array($cat->term_id, $rss_categories);
+                                            ?>
+                                            <label class="flm-tag-toggle <?php echo $is_enabled ? 'active' : ''; ?>" style="display:inline-flex;align-items:center;gap:6px;padding:8px 12px;border-radius:20px;border:1px solid var(--flm-border);background:<?php echo $is_enabled ? 'var(--flm-accent)' : 'var(--flm-bg)'; ?>;color:<?php echo $is_enabled ? 'white' : 'var(--flm-text)'; ?>;cursor:pointer;font-size:13px;transition:all 0.2s;">
+                                                <input type="checkbox" name="flm_settings[rss_feed_categories][]" value="<?php echo $cat->term_id; ?>" <?php checked($is_enabled); ?> style="display:none;">
+                                                <?php echo esc_html($cat->name); ?>
+                                                <span style="font-size:11px;opacity:0.7;">(<?php echo $cat->count; ?>)</span>
+                                            </label>
+                                            <?php endforeach; ?>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Team Feeds -->
+                                    <div style="margin-bottom:20px;">
+                                        <label class="flm-label">Team Feeds</label>
+                                        <p style="font-size:12px;color:var(--flm-text-muted);margin:0 0 12px;">Create feeds for specific teams:</p>
+                                        <div style="display:flex;flex-wrap:wrap;gap:8px;">
+                                            <?php 
+                                            $rss_teams = $settings['rss_feed_teams'] ?? array_keys($this->target_teams);
+                                            foreach ($this->target_teams as $key => $team): 
+                                            $is_enabled = in_array($key, $rss_teams);
+                                            ?>
+                                            <label class="flm-tag-toggle <?php echo $is_enabled ? 'active' : ''; ?>" style="display:inline-flex;align-items:center;gap:6px;padding:8px 12px;border-radius:20px;border:1px solid var(--flm-border);background:<?php echo $is_enabled ? $team['color'] : 'var(--flm-bg)'; ?>;color:<?php echo $is_enabled ? 'white' : 'var(--flm-text)'; ?>;cursor:pointer;font-size:13px;transition:all 0.2s;">
+                                                <input type="checkbox" name="flm_settings[rss_feed_teams][]" value="<?php echo esc_attr($key); ?>" <?php checked($is_enabled); ?> style="display:none;">
+                                                <?php echo esc_html($team['name']); ?>
+                                            </label>
+                                            <?php endforeach; ?>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Feed URLs Preview -->
+                                    <div style="background:var(--flm-bg);border-radius:12px;padding:16px;border:1px solid var(--flm-border);">
+                                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+                                            <h4 style="margin:0;font-size:13px;font-weight:600;color:var(--flm-text);">Available Feed URLs</h4>
+                                            <button type="button" id="flm-refresh-feeds" class="flm-btn flm-btn-sm flm-btn-secondary">
+                                                <?php echo $this->icon('refresh'); ?> Refresh
+                                            </button>
+                                        </div>
+                                        <div id="flm-feed-urls" style="font-family:monospace;font-size:12px;display:flex;flex-direction:column;gap:6px;">
+                                            <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--flm-bg-card);border-radius:6px;">
+                                                <span style="color:var(--flm-success);">●</span>
+                                                <span style="flex:1;color:var(--flm-text);"><?php echo home_url('/feed/flm-latest/'); ?></span>
+                                                <span style="color:var(--flm-text-muted);font-size:11px;">Latest Stories</span>
+                                                <button type="button" class="flm-copy-url" data-url="<?php echo home_url('/feed/flm-latest/'); ?>" style="background:none;border:none;color:var(--flm-accent);cursor:pointer;padding:4px;"><?php echo $this->icon('external'); ?></button>
+                                            </div>
+                                            <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--flm-bg-card);border-radius:6px;">
+                                                <span style="color:var(--flm-warning);">●</span>
+                                                <span style="flex:1;color:var(--flm-text);"><?php echo home_url('/feed/flm-breaking/'); ?></span>
+                                                <span style="color:var(--flm-text-muted);font-size:11px;">Breaking News</span>
+                                                <button type="button" class="flm-copy-url" data-url="<?php echo home_url('/feed/flm-breaking/'); ?>" style="background:none;border:none;color:var(--flm-accent);cursor:pointer;padding:4px;"><?php echo $this->icon('external'); ?></button>
+                                            </div>
+                                            <?php foreach ($this->target_teams as $key => $team): ?>
+                                            <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--flm-bg-card);border-radius:6px;">
+                                                <span style="color:<?php echo $team['color']; ?>;">●</span>
+                                                <span style="flex:1;color:var(--flm-text);"><?php echo home_url('/feed/flm-' . $key . '/'); ?></span>
+                                                <span style="color:var(--flm-text-muted);font-size:11px;"><?php echo esc_html($team['name']); ?></span>
+                                                <button type="button" class="flm-copy-url" data-url="<?php echo home_url('/feed/flm-' . $key . '/'); ?>" style="background:none;border:none;color:var(--flm-accent);cursor:pointer;padding:4px;"><?php echo $this->icon('external'); ?></button>
+                                            </div>
+                                            <?php endforeach; ?>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Webhooks (v2.20.0) -->
+                            <div class="flm-card" style="margin-top:24px;">
+                                <div class="flm-card-header">
+                                    <h2 class="flm-card-title">
+                                        <span class="flm-card-icon" style="background:linear-gradient(135deg,#06b6d4,#0891b2);">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
+                                        </span>
+                                        Webhook Integrations
+                                        <span class="flm-badge" style="background:rgba(6,182,212,0.15);color:#06b6d4;margin-left:8px;">v2.20</span>
+                                    </h2>
+                                    <label class="flm-toggle">
+                                        <input type="checkbox" name="flm_settings[webhooks_enabled]" value="1" id="flm-webhooks-enabled" <?php checked($settings['webhooks_enabled'] ?? false); ?>>
+                                        <span class="flm-toggle-switch"></span>
+                                    </label>
+                                </div>
+                                <div class="flm-card-body">
+                                    <p style="color:var(--flm-text-muted);font-size:13px;margin:0 0 16px;">
+                                        Send POST requests to external URLs when events occur. Perfect for Zapier, Make.com, n8n, or custom integrations.
+                                    </p>
+                                    
+                                    <!-- Add New Webhook -->
+                                    <div style="background:var(--flm-bg);border-radius:12px;padding:16px;border:1px solid var(--flm-border);margin-bottom:20px;">
+                                        <h4 style="margin:0 0 12px;font-size:13px;font-weight:600;color:var(--flm-text);">Add Webhook</h4>
+                                        
+                                        <div style="display:grid;grid-template-columns:1fr 2fr;gap:12px;margin-bottom:12px;">
+                                            <div class="flm-form-group" style="margin:0;">
+                                                <label class="flm-label">Name</label>
+                                                <input type="text" id="flm-webhook-name" class="flm-input" placeholder="My Webhook">
+                                            </div>
+                                            <div class="flm-form-group" style="margin:0;">
+                                                <label class="flm-label">Webhook URL</label>
+                                                <input type="url" id="flm-webhook-url" class="flm-input" placeholder="https://hooks.zapier.com/...">
+                                            </div>
+                                        </div>
+                                        
+                                        <div class="flm-form-group" style="margin:0 0 12px;">
+                                            <label class="flm-label">Secret Key (optional)</label>
+                                            <input type="text" id="flm-webhook-secret" class="flm-input" placeholder="Used for HMAC signature verification">
+                                        </div>
+                                        
+                                        <div class="flm-form-group" style="margin:0 0 16px;">
+                                            <label class="flm-label">Trigger Events</label>
+                                            <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;">
+                                                <label class="flm-checkbox-inline">
+                                                    <input type="checkbox" class="flm-webhook-event" value="post_imported">
+                                                    <span>Post Imported</span>
+                                                </label>
+                                                <label class="flm-checkbox-inline">
+                                                    <input type="checkbox" class="flm-webhook-event" value="post_published">
+                                                    <span>Post Published</span>
+                                                </label>
+                                                <label class="flm-checkbox-inline">
+                                                    <input type="checkbox" class="flm-webhook-event" value="breaking_news">
+                                                    <span>Breaking News</span>
+                                                </label>
+                                                <label class="flm-checkbox-inline">
+                                                    <input type="checkbox" class="flm-webhook-event" value="import_completed">
+                                                    <span>Import Completed</span>
+                                                </label>
+                                                <label class="flm-checkbox-inline">
+                                                    <input type="checkbox" class="flm-webhook-event" value="social_posted">
+                                                    <span>Social Posted</span>
+                                                </label>
+                                                <label class="flm-checkbox-inline">
+                                                    <input type="checkbox" class="flm-webhook-event" value="ab_test_winner">
+                                                    <span>A/B Winner Selected</span>
+                                                </label>
+                                            </div>
+                                        </div>
+                                        
+                                        <button type="button" id="flm-add-webhook" class="flm-btn flm-btn-primary">
+                                            <?php echo $this->icon('plug'); ?> Add Webhook
+                                        </button>
+                                    </div>
+                                    
+                                    <!-- Configured Webhooks -->
+                                    <div id="flm-webhooks-list">
+                                        <h4 style="margin:0 0 12px;font-size:13px;font-weight:600;color:var(--flm-text);">Configured Webhooks</h4>
+                                        <div id="flm-webhooks-container" style="display:flex;flex-direction:column;gap:8px;">
+                                            <?php 
+                                            $webhooks = $settings['webhooks'] ?? [];
+                                            if (empty($webhooks)): 
+                                            ?>
+                                            <p style="color:var(--flm-text-muted);font-size:13px;margin:0;padding:16px;text-align:center;background:var(--flm-bg);border-radius:8px;">No webhooks configured yet</p>
+                                            <?php else: 
+                                            foreach ($webhooks as $webhook): ?>
+                                            <div class="flm-webhook-item" data-id="<?php echo esc_attr($webhook['id']); ?>" style="display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--flm-bg);border-radius:8px;border:1px solid var(--flm-border);">
+                                                <span style="width:8px;height:8px;border-radius:50%;background:<?php echo $webhook['enabled'] ? 'var(--flm-success)' : 'var(--flm-text-muted)'; ?>;"></span>
+                                                <div style="flex:1;">
+                                                    <div style="font-weight:600;color:var(--flm-text);"><?php echo esc_html($webhook['name']); ?></div>
+                                                    <div style="font-size:12px;color:var(--flm-text-muted);font-family:monospace;"><?php echo esc_html(substr($webhook['url'], 0, 50)); ?>...</div>
+                                                </div>
+                                                <div style="display:flex;gap:8px;font-size:11px;color:var(--flm-text-muted);">
+                                                    <?php foreach ($webhook['events'] ?? [] as $event): ?>
+                                                    <span style="padding:2px 6px;background:var(--flm-bg-card);border-radius:4px;"><?php echo esc_html($event); ?></span>
+                                                    <?php endforeach; ?>
+                                                </div>
+                                                <div style="display:flex;gap:4px;">
+                                                    <button type="button" class="flm-test-webhook" data-id="<?php echo esc_attr($webhook['id']); ?>" style="background:none;border:none;color:var(--flm-accent);cursor:pointer;padding:6px;" title="Test">
+                                                        <?php echo $this->icon('play'); ?>
+                                                    </button>
+                                                    <button type="button" class="flm-delete-webhook" data-id="<?php echo esc_attr($webhook['id']); ?>" style="background:none;border:none;color:var(--flm-error);cursor:pointer;padding:6px;" title="Delete">
+                                                        <?php echo $this->icon('trash'); ?>
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            <?php endforeach; endif; ?>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Payload Example -->
+                                    <div style="margin-top:20px;padding:16px;background:var(--flm-bg);border-radius:12px;border:1px solid var(--flm-border);">
+                                        <h4 style="margin:0 0 8px;font-size:12px;font-weight:600;color:var(--flm-text-muted);">Example Payload</h4>
+                                        <pre style="margin:0;font-size:11px;color:var(--flm-text);background:var(--flm-bg-card);padding:12px;border-radius:6px;overflow-x:auto;white-space:pre-wrap;">{
+  "event": "post_imported",
+  "timestamp": "2025-01-01T12:00:00+00:00",
+  "site_url": "<?php echo home_url(); ?>",
+  "site_name": "<?php echo get_bloginfo('name'); ?>",
+  "post_id": 12345,
+  "post_url": "<?php echo home_url('/braves-news/'); ?>",
+  "title": "Braves Sign Star Pitcher",
+  "team": "braves"
+}</pre>
+                                        <p style="font-size:11px;color:var(--flm-text-muted);margin:8px 0 0;">
+                                            Headers include: <code>X-FLM-Event</code>, <code>X-FLM-Delivery</code>, <code>X-FLM-Signature</code> (if secret set)
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                            
                         </div>
                     </div><!-- End Publishing Panel -->
                 
@@ -25308,46 +27935,102 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
                                 
                             </div>
                             
-                            <!-- Headline Analyzer -->
+                            <!-- Headline Analyzer & Generator -->
                             <div class="flm-headline-analyzer" id="flm-headline-analyzer">
                                 <div class="flm-card-header" style="padding:0 0 20px 0;border:none;">
                                     <h3 class="flm-card-title">
                                         <span class="flm-card-icon" style="background:linear-gradient(135deg,#a371f7,#8b5cf6);">
                                             <?php echo $this->icon('bolt'); ?>
                                         </span>
-                                        AI Headline Analyzer
+                                        AI Headline Studio
+                                        <span class="flm-badge" style="background:rgba(163,113,247,0.15);color:#a371f7;margin-left:8px;">v2.20</span>
                                     </h3>
                                     <span class="flm-badge" style="background:rgba(163,113,247,0.15);color:#a371f7;">Powered by Claude</span>
                                 </div>
                                 
-                                <div class="flm-headline-input-group">
-                                    <input type="text" id="flm-headline-input" class="flm-headline-input" placeholder="Enter a headline to analyze (e.g., 'Braves Sign Star Pitcher to 5-Year Deal')">
-                                    <button type="button" id="flm-analyze-headline" class="flm-analyze-btn">
-                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
-                                        Analyze
+                                <!-- Tab Switcher -->
+                                <div class="flm-headline-tabs" style="display:flex;gap:8px;margin-bottom:20px;">
+                                    <button type="button" class="flm-headline-tab active" data-tab="analyze" style="flex:1;padding:12px;border-radius:8px;border:1px solid var(--flm-border);background:var(--flm-accent);color:white;font-weight:600;cursor:pointer;">
+                                        <?php echo $this->icon('chart'); ?> Analyze
+                                    </button>
+                                    <button type="button" class="flm-headline-tab" data-tab="generate" style="flex:1;padding:12px;border-radius:8px;border:1px solid var(--flm-border);background:var(--flm-bg);color:var(--flm-text);font-weight:600;cursor:pointer;">
+                                        <?php echo $this->icon('bolt'); ?> Generate Alternatives
                                     </button>
                                 </div>
                                 
-                                <div class="flm-headline-results" id="flm-headline-results">
-                                    <div class="flm-score-display">
-                                        <div class="flm-score-ring">
-                                            <svg width="100" height="100">
-                                                <circle class="flm-score-ring-bg" cx="50" cy="50" r="42"/>
-                                                <circle class="flm-score-ring-fill" cx="50" cy="50" r="42"/>
-                                            </svg>
-                                            <span class="flm-score-value">0</span>
-                                            <span class="flm-score-label">Score</span>
+                                <!-- Analyze Tab -->
+                                <div class="flm-headline-tab-content" id="flm-headline-tab-analyze">
+                                    <div class="flm-headline-input-group">
+                                        <input type="text" id="flm-headline-input" class="flm-headline-input" placeholder="Enter a headline to analyze (e.g., 'Braves Sign Star Pitcher to 5-Year Deal')">
+                                        <button type="button" id="flm-analyze-headline" class="flm-analyze-btn">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+                                            Analyze
+                                        </button>
+                                    </div>
+                                    
+                                    <div class="flm-headline-results" id="flm-headline-results">
+                                        <div class="flm-score-display">
+                                            <div class="flm-score-ring">
+                                                <svg width="100" height="100">
+                                                    <circle class="flm-score-ring-bg" cx="50" cy="50" r="42"/>
+                                                    <circle class="flm-score-ring-fill" cx="50" cy="50" r="42"/>
+                                                </svg>
+                                                <span class="flm-score-value">0</span>
+                                                <span class="flm-score-label">Score</span>
+                                            </div>
+                                            <div class="flm-score-details">
+                                                <div class="flm-score-verdict">Analyzing...</div>
+                                                <div class="flm-score-breakdown"></div>
+                                            </div>
                                         </div>
-                                        <div class="flm-score-details">
-                                            <div class="flm-score-verdict">Analyzing...</div>
-                                            <div class="flm-score-breakdown"></div>
+                                        
+                                        <div class="flm-ai-suggestions">
+                                            <div class="flm-ai-suggestions-title">
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+                                                AI Suggestions
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <!-- Generate Tab -->
+                                <div class="flm-headline-tab-content" id="flm-headline-tab-generate" style="display:none;">
+                                    <div class="flm-form-group" style="margin-bottom:16px;">
+                                        <label class="flm-label">Original Headline</label>
+                                        <input type="text" id="flm-generate-headline-input" class="flm-input" placeholder="Enter the headline you want alternatives for...">
+                                    </div>
+                                    
+                                    <div class="flm-form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">
+                                        <div class="flm-form-group">
+                                            <label class="flm-label">Team Context</label>
+                                            <select id="flm-generate-team" class="flm-select">
+                                                <option value="">— Select Team —</option>
+                                                <?php foreach ($this->target_teams as $key => $team): ?>
+                                                <option value="<?php echo esc_attr($key); ?>"><?php echo esc_html($team['name']); ?></option>
+                                                <?php endforeach; ?>
+                                            </select>
+                                        </div>
+                                        <div class="flm-form-group">
+                                            <label class="flm-label">Additional Context (optional)</label>
+                                            <input type="text" id="flm-generate-context" class="flm-input" placeholder="e.g., playoff game, breaking news">
                                         </div>
                                     </div>
                                     
-                                    <div class="flm-ai-suggestions">
-                                        <div class="flm-ai-suggestions-title">
-                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
-                                            AI Suggestions
+                                    <button type="button" id="flm-generate-headlines-btn" class="flm-btn flm-btn-primary" style="width:100%;">
+                                        <?php echo $this->icon('bolt'); ?> Generate 5 Alternative Headlines
+                                    </button>
+                                    
+                                    <div id="flm-generated-headlines" style="margin-top:20px;display:none;">
+                                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+                                            <h4 style="font-weight:600;color:var(--flm-text);margin:0;">Generated Headlines</h4>
+                                            <span id="flm-generate-source" class="flm-badge" style="background:rgba(139,92,246,0.15);color:#8b5cf6;"></span>
+                                        </div>
+                                        <div id="flm-headlines-list" style="display:flex;flex-direction:column;gap:8px;">
+                                            <!-- Headlines populated by JS -->
+                                        </div>
+                                        <div id="flm-headline-analysis" style="margin-top:16px;padding:12px;background:var(--flm-bg);border-radius:8px;border:1px solid var(--flm-border);display:none;">
+                                            <div style="font-size:12px;color:var(--flm-text-muted);font-weight:600;margin-bottom:6px;">AI Analysis</div>
+                                            <div id="flm-headline-analysis-text" style="font-size:13px;color:var(--flm-text);"></div>
                                         </div>
                                     </div>
                                 </div>
