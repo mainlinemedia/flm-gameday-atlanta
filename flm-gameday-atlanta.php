@@ -3,7 +3,7 @@
  * Plugin Name: FLM GameDay Atlanta
  * Plugin URI: https://github.com/mainlinemedia/flm-gameday-atlanta
  * Description: Import Braves, Hawks, Falcons, UGA & GT content from Field Level Media with AI enhancement, social posting, and analytics.
- * Version: 2.20.0
+ * Version: 2.20.1
  * Author: Austin / Mainline Media Group
  * Author URI: https://mainlinemediagroup.com
  * License: Proprietary
@@ -19,7 +19,7 @@ if (!defined('ABSPATH')) exit;
 class FLM_GameDay_Atlanta {
     
     private $api_base = 'https://api.fieldlevelmedia.com/v1';
-    private $version = '2.20.0';
+    private $version = '2.20.1';
     
     // GitHub Update Configuration
     private $github_username = 'mainlinemedia';
@@ -68,6 +68,7 @@ class FLM_GameDay_Atlanta {
             'dream' => true,
             'uga' => true,
             'gt' => true,
+            'faze' => true,
         ],
         'create_team_categories' => true,
         'create_league_categories' => true,
@@ -241,6 +242,7 @@ class FLM_GameDay_Atlanta {
             'dream' => '#AtlantaDream #DreamOn',
             'uga' => '#UGA #GoDawgs',
             'gt' => '#GaTech #TogetherWeSwarm',
+            'faze' => '#FaZeUp #FaZeClan #Esports',
         ],
         'instagram' => [
             'braves' => '#Braves #ForTheA #ChopOn #AtlantaBraves #MLB',
@@ -250,6 +252,7 @@ class FLM_GameDay_Atlanta {
             'dream' => '#AtlantaDream #DreamOn #WNBA #WNBATwitter #WomensSports',
             'uga' => '#UGA #GoDawgs #GeorgiaBulldogs #SEC #CollegeFootball',
             'gt' => '#GaTech #TogetherWeSwarm #YellowJackets #ACC #GeorgiaTech',
+            'faze' => '#FaZeUp #FaZeClan #Esports #Gaming #Atlanta',
         ],
         'facebook' => [
             'braves' => '#Braves #ForTheA #AtlantaBraves',
@@ -259,11 +262,12 @@ class FLM_GameDay_Atlanta {
             'dream' => '#AtlantaDream #DreamOn #WNBA',
             'uga' => '#UGA #GoDawgs #GeorgiaBulldogs',
             'gt' => '#GaTech #TogetherWeSwarm #YellowJackets',
+            'faze' => '#FaZeUp #FaZeClan #Esports',
         ],
     ];
     
     // Team configuration with colors for UI
-    // League IDs from FLM API: MLB=1, NFL=30, NBA=26, NCAAF=31, NCAAB=20
+    // League IDs from FLM API: MLB=1, NFL=30, NBA=26, WNBA=21, MLS=72, NCAAF=31, NCAAB=20, WNCAAB=27
     private $target_teams = [
         'braves' => [
             'name' => 'Atlanta Braves',
@@ -271,7 +275,7 @@ class FLM_GameDay_Atlanta {
             'league' => 'MLB',
             'league_id' => 1,
             'identifiers' => ['Braves', 'ATL', 'Atlanta Braves'],
-            'team_ids' => ['68'],
+            'team_ids' => ['68', '144', '15'],  // Multiple potential IDs - 144 is MLB Stats API
             'color' => '#CE1141',
             'secondary' => '#13274F',
         ],
@@ -337,6 +341,16 @@ class FLM_GameDay_Atlanta {
             'color' => '#B3A369',
             'secondary' => '#003057',
         ],
+        'faze' => [
+            'name' => 'FaZe Clan',
+            'category_name' => 'FaZe Clan',
+            'league' => 'Esports',
+            'league_id' => 0,  // May need to discover correct ID
+            'identifiers' => ['FaZe', 'FaZe Clan', 'FaZe Atlanta'],
+            'team_ids' => [],  // Will need to discover
+            'color' => '#FF0000',
+            'secondary' => '#000000',
+        ],
     ];
     
     // League configuration - maps league IDs to names
@@ -349,6 +363,8 @@ class FLM_GameDay_Atlanta {
         31 => ['name' => 'NCAAF', 'full_name' => 'NCAA Football'],
         20 => ['name' => 'NCAAB', 'full_name' => 'NCAA Basketball'],
         27 => ['name' => 'WNCAAB', 'full_name' => "Women's NCAA Basketball"],
+        // Esports leagues - IDs to be confirmed via API discovery
+        100 => ['name' => 'Esports', 'full_name' => 'Esports'],
     ];
     
     // SVG Icons
@@ -15520,21 +15536,42 @@ class FLM_GameDay_Atlanta {
         $home_id = (string)($home_team['teamId'] ?? '');
         $away_id = (string)($away_team['teamId'] ?? '');
         
-        // No team IDs = can't match
-        if (empty($home_id) && empty($away_id)) {
-            return false;
-        }
+        // Get team names for identifier matching
+        $home_name = $home_team['name'] ?? $home_team['shortName'] ?? '';
+        $away_name = $away_team['name'] ?? $away_team['shortName'] ?? '';
+        $headline = strtolower($story['headline'] ?? '');
         
-        // Match by team ID (FLM properly tags all content with team IDs)
+        // Match by team ID first (most accurate)
         foreach ($this->target_teams as $key => $team_config) {
             if (empty($settings['teams_enabled'][$key])) {
                 continue;
             }
             
+            // Match by team_ids if available
             if (!empty($team_config['team_ids'])) {
                 foreach ($team_config['team_ids'] as $tid) {
                     $tid = (string)$tid;
-                    if ($home_id === $tid || $away_id === $tid) {
+                    if (($home_id && $home_id === $tid) || ($away_id && $away_id === $tid)) {
+                        return $key;
+                    }
+                }
+            }
+        }
+        
+        // Fallback: Match by identifiers in team names or headline
+        // This helps when team_ids aren't known OR when they didn't match
+        foreach ($this->target_teams as $key => $team_config) {
+            if (empty($settings['teams_enabled'][$key])) {
+                continue;
+            }
+            
+            // Match by identifiers in team names or headline
+            if (!empty($team_config['identifiers'])) {
+                foreach ($team_config['identifiers'] as $identifier) {
+                    $id_lower = strtolower($identifier);
+                    if (stripos($home_name, $identifier) !== false || 
+                        stripos($away_name, $identifier) !== false ||
+                        stripos($headline, $id_lower) !== false) {
                         return $key;
                     }
                 }
@@ -15556,8 +15593,8 @@ class FLM_GameDay_Atlanta {
         if ($single_league !== null) {
             $leagues_to_check = [(int)$single_league];
         } else {
-            // All leagues: MLB=1, NFL=30, NBA=26, NCAAF=31, NCAAB=20
-            $leagues_to_check = [1, 30, 26, 31, 20];
+            // All leagues: MLB=1, NFL=30, NBA=26, WNBA=21, MLS=72, NCAAF=31, NCAAB=20, WNCAAB=27
+            $leagues_to_check = [1, 30, 26, 21, 72, 31, 20, 27];
         }
         
         $imported = 0;
@@ -15570,8 +15607,11 @@ class FLM_GameDay_Atlanta {
             1 => 'MLB', 
             30 => 'NFL', 
             26 => 'NBA',
+            21 => 'WNBA',
+            72 => 'MLS',
             31 => 'NCAAF',
             20 => 'NCAAB',
+            27 => 'WNCAAB',
         ];
         $this->log_error('info', 'import', 'Starting import run', [
             'leagues' => array_map(function($id) use ($league_names) { 
@@ -16695,12 +16735,16 @@ class FLM_GameDay_Atlanta {
         $output[] = '';
         
         // Test each league endpoint (using correct FLM league IDs)
+        // Now includes ALL configured leagues: MLB, NFL, NBA, WNBA, MLS, NCAAF, NCAAB, WNCAAB
         $test_leagues = [
             1 => 'MLB', 
             30 => 'NFL', 
             26 => 'NBA',
+            21 => 'WNBA',
+            72 => 'MLS',
             31 => 'NCAAF',
             20 => 'NCAAB',
+            27 => 'WNCAAB',
         ];
         
         $league_count = 0;
@@ -16723,13 +16767,40 @@ class FLM_GameDay_Atlanta {
                 $output[] = "<span class=\"warning\">⚠ {$league_name} (League {$league_id}): Invalid response</span>";
             } else {
                 $matches = 0;
+                $team_ids_found = [];
                 foreach ($stories as $story) {
+                    // Collect team IDs for debug
+                    $home_id = $story['homeTeam']['teamId'] ?? null;
+                    $away_id = $story['awayTeam']['teamId'] ?? null;
+                    $home_name = $story['homeTeam']['name'] ?? $story['homeTeam']['shortName'] ?? '';
+                    $away_name = $story['awayTeam']['name'] ?? $story['awayTeam']['shortName'] ?? '';
+                    if ($home_id) {
+                        $team_ids_found[$home_id] = $home_name ?: "Team {$home_id}";
+                    }
+                    if ($away_id) {
+                        $team_ids_found[$away_id] = $away_name ?: "Team {$away_id}";
+                    }
+                    
                     if ($this->get_matching_team($story)) {
                         $matches++;
                     }
                 }
                 $output[] = "<span class=\"success\">✓ {$league_name} (League {$league_id}): " . count($stories) . " stories</span>";
                 $output[] = "  Matching your configured teams: {$matches}";
+                
+                // Show team IDs found (helpful for debugging)
+                if (!empty($team_ids_found) && $matches === 0) {
+                    $output[] = "  <span class=\"info\">Team IDs in feed (for debugging):</span>";
+                    $shown = 0;
+                    foreach ($team_ids_found as $tid => $tname) {
+                        if ($shown >= 10) {
+                            $output[] = "    ... and " . (count($team_ids_found) - 10) . " more";
+                            break;
+                        }
+                        $output[] = "    ID {$tid}: {$tname}";
+                        $shown++;
+                    }
+                }
             }
             
             // Rate limit pause between API calls (not on last one)
