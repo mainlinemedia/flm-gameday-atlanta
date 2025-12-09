@@ -3,7 +3,7 @@
  * Plugin Name: FLM GameDay Atlanta
  * Plugin URI: https://github.com/mainlinemedia/flm-gameday-atlanta
  * Description: Import Braves, Hawks, Falcons, UGA & GT content from Field Level Media with AI enhancement, social posting, and analytics.
- * Version: 2.18.0
+ * Version: 2.18.1
  * Author: Austin / Mainline Media Group
  * Author URI: https://mainlinemediagroup.com
  * License: Proprietary
@@ -19,7 +19,7 @@ if (!defined('ABSPATH')) exit;
 class FLM_GameDay_Atlanta {
     
     private $api_base = 'https://api.fieldlevelmedia.com/v1';
-    private $version = '2.18.0';
+    private $version = '2.18.1';
     
     // GitHub Update Configuration
     private $github_username = 'mainlinemedia';
@@ -323,6 +323,8 @@ class FLM_GameDay_Atlanta {
         add_filter('plugins_api', [$this, 'github_plugin_info'], 20, 3);
         add_filter('upgrader_post_install', [$this, 'github_post_install'], 10, 3);
         add_filter('plugin_row_meta', [$this, 'plugin_row_meta'], 10, 2);
+        add_filter('auto_update_plugin', [$this, 'auto_update_plugin'], 10, 2);
+        add_filter('plugin_auto_update_setting_html', [$this, 'plugin_auto_update_setting_html'], 10, 3);
         
         // AJAX handlers
         add_action('wp_ajax_flm_run_import', [$this, 'ajax_run_import']);
@@ -23050,6 +23052,53 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
     }
     
     /**
+     * Allow auto-updates for this plugin
+     */
+    public function auto_update_plugin($update, $item) {
+        if (isset($item->slug) && $item->slug === dirname(plugin_basename(__FILE__))) {
+            // Check if auto-updates are enabled for this plugin
+            $auto_updates = (array) get_site_option('auto_update_plugins', []);
+            return in_array(plugin_basename(__FILE__), $auto_updates);
+        }
+        return $update;
+    }
+    
+    /**
+     * Show auto-update toggle in plugins list
+     */
+    public function plugin_auto_update_setting_html($html, $plugin_file, $plugin_data) {
+        if ($plugin_file !== plugin_basename(__FILE__)) {
+            return $html;
+        }
+        
+        // Get current auto-update status
+        $auto_updates = (array) get_site_option('auto_update_plugins', []);
+        $is_enabled = in_array($plugin_file, $auto_updates);
+        
+        // Build the toggle link
+        $action = $is_enabled ? 'disable' : 'enable';
+        $action_label = $is_enabled ? __('Disable auto-updates') : __('Enable auto-updates');
+        
+        $query_args = [
+            'action' => "{$action}-auto-update",
+            'plugin' => $plugin_file,
+            'paged' => isset($_GET['paged']) ? absint($_GET['paged']) : 1,
+        ];
+        
+        $url = add_query_arg($query_args, 'plugins.php');
+        $url = wp_nonce_url($url, 'updates');
+        
+        $html = sprintf(
+            '<a href="%s" class="toggle-auto-update aria-button-if-js" data-wp-action="%s">%s</a>',
+            esc_url($url),
+            $action,
+            esc_html($action_label)
+        );
+        
+        return $html;
+    }
+    
+    /**
      * Force update check (useful for testing)
      */
     public function force_update_check() {
@@ -24155,7 +24204,7 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
                     <button type="button" class="flm-tab" data-tab="teams" role="tab">
                         <?php echo $this->icon('trophy'); ?>
                         <span class="flm-tab-text">Teams</span>
-                        <span class="flm-tab-badge success"><?php echo $enabled_teams; ?>/5</span>
+                        <span class="flm-tab-badge success"><?php echo $enabled_teams; ?>/<?php echo count($this->target_teams); ?></span>
                     </button>
                     <button type="button" class="flm-tab" data-tab="publishing" role="tab">
                         <?php echo $this->icon('share'); ?>
@@ -24303,7 +24352,7 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
                             
                             <div class="flm-stat-card">
                                 <div class="flm-stat-label">Active Teams</div>
-                                <div class="flm-stat-value"><?php echo $enabled_teams; ?>/5</div>
+                                <div class="flm-stat-value"><?php echo $enabled_teams; ?>/<?php echo count($this->target_teams); ?></div>
                                 <div class="flm-stat-meta">Teams being tracked</div>
                             </div>
                             
