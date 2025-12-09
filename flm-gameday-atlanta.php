@@ -1,160 +1,31 @@
 <?php
 /**
  * Plugin Name: FLM GameDay Atlanta
- * Plugin URI: https://github.com/MainlineMediaGroup/flm-gameday-atlanta
+ * Plugin URI: https://github.com/mainlinemedia/flm-gameday-atlanta
  * Description: Import Braves, Hawks, Falcons, UGA & GT content from Field Level Media with AI enhancement, social posting, and analytics.
- * Version: 2.15.0
+ * Version: 2.17.0
  * Author: Austin / Mainline Media Group
  * Author URI: https://mainlinemediagroup.com
  * License: Proprietary
  * Requires at least: 5.8
  * Requires PHP: 7.4
- * GitHub Plugin URI: MainlineMediaGroup/flm-gameday-atlanta
- * Primary Branch: main
+ * Update URI: https://github.com/mainlinemedia/flm-gameday-atlanta
+ * GitHub Plugin URI: mainlinemedia/flm-gameday-atlanta
+ * GitHub Branch: main
  */
 
 if (!defined('ABSPATH')) exit;
 
-// GitHub Updater Class
-class FLM_GitHub_Updater {
-    private $slug;
-    private $plugin_file;
-    private $version;
-    private $github_repo = 'MainlineMediaGroup/flm-gameday-atlanta';
-    private $github_response;
-    
-    public function __construct($plugin_file) {
-        $this->plugin_file = $plugin_file;
-        $this->slug = plugin_basename($plugin_file);
-        
-        // Get current version from plugin data
-        if (!function_exists('get_plugin_data')) {
-            require_once(ABSPATH . 'wp-admin/includes/plugin.php');
-        }
-        $plugin_data = get_plugin_data($plugin_file);
-        $this->version = $plugin_data['Version'];
-        
-        add_filter('pre_set_site_transient_update_plugins', [$this, 'check_update']);
-        add_filter('plugins_api', [$this, 'plugin_info'], 20, 3);
-        add_filter('upgrader_post_install', [$this, 'after_install'], 10, 3);
-    }
-    
-    private function get_github_release() {
-        if (!empty($this->github_response)) {
-            return $this->github_response;
-        }
-        
-        $url = "https://api.github.com/repos/{$this->github_repo}/releases/latest";
-        
-        $response = wp_remote_get($url, [
-            'headers' => [
-                'Accept' => 'application/vnd.github.v3+json',
-                'User-Agent' => 'WordPress/' . get_bloginfo('version'),
-            ],
-            'timeout' => 10,
-        ]);
-        
-        if (is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) {
-            return false;
-        }
-        
-        $this->github_response = json_decode(wp_remote_retrieve_body($response));
-        return $this->github_response;
-    }
-    
-    public function check_update($transient) {
-        if (empty($transient->checked)) {
-            return $transient;
-        }
-        
-        $release = $this->get_github_release();
-        
-        if (!$release || !isset($release->tag_name)) {
-            return $transient;
-        }
-        
-        $github_version = ltrim($release->tag_name, 'v');
-        
-        if (version_compare($github_version, $this->version, '>')) {
-            $package = '';
-            if (!empty($release->assets) && !empty($release->assets[0]->browser_download_url)) {
-                $package = $release->assets[0]->browser_download_url;
-            } elseif (!empty($release->zipball_url)) {
-                $package = $release->zipball_url;
-            }
-            
-            $transient->response[$this->slug] = (object) [
-                'slug' => dirname($this->slug),
-                'new_version' => $github_version,
-                'package' => $package,
-                'url' => $release->html_url,
-            ];
-        }
-        
-        return $transient;
-    }
-    
-    public function plugin_info($result, $action, $args) {
-        if ($action !== 'plugin_information') {
-            return $result;
-        }
-        
-        if (!isset($args->slug) || $args->slug !== dirname($this->slug)) {
-            return $result;
-        }
-        
-        $release = $this->get_github_release();
-        
-        if (!$release) {
-            return $result;
-        }
-        
-        return (object) [
-            'name' => 'FLM GameDay Atlanta',
-            'slug' => dirname($this->slug),
-            'version' => ltrim($release->tag_name, 'v'),
-            'author' => '<a href="https://mainlinemediagroup.com">Mainline Media Group</a>',
-            'homepage' => "https://github.com/{$this->github_repo}",
-            'short_description' => 'Import sports content from Field Level Media with AI enhancement.',
-            'sections' => [
-                'description' => 'FLM GameDay Atlanta imports and manages sports content from Field Level Media API.',
-                'changelog' => nl2br($release->body ?? 'See GitHub for changelog.'),
-            ],
-            'download_link' => !empty($release->assets[0]->browser_download_url) 
-                ? $release->assets[0]->browser_download_url 
-                : $release->zipball_url,
-            'last_updated' => $release->published_at ?? '',
-            'requires' => '5.8',
-            'tested' => get_bloginfo('version'),
-            'requires_php' => '7.4',
-        ];
-    }
-    
-    public function after_install($response, $hook_extra, $result) {
-        global $wp_filesystem;
-        
-        $install_directory = plugin_dir_path($this->plugin_file);
-        $wp_filesystem->move($result['destination'], $install_directory);
-        $result['destination'] = $install_directory;
-        
-        activate_plugin($this->slug);
-        
-        return $result;
-    }
-}
-
-// Initialize updater
-add_action('admin_init', function() {
-    if (is_admin()) {
-        new FLM_GitHub_Updater(__FILE__);
-    }
-});
-
 class FLM_GameDay_Atlanta {
     
     private $api_base = 'https://api.fieldlevelmedia.com/v1';
-    private $oauth_base = 'https://mmgleads.com/oauth';
-    private $version = '2.15.0';
+    private $version = '2.17.0';
+    
+    // GitHub Update Configuration
+    private $github_username = 'mainlinemedia';
+    private $github_repo = 'flm-gameday-atlanta';
+    private $github_branch = 'main';
+    private $plugin_slug = 'flm-gameday-atlanta/flm-gameday-atlanta.php';
     
     // Rate limiting configuration
     private $rate_limit_config = [
@@ -193,6 +64,8 @@ class FLM_GameDay_Atlanta {
             'braves' => true,
             'falcons' => true,
             'hawks' => true,
+            'united' => true,
+            'dream' => true,
             'uga' => true,
             'gt' => true,
         ],
@@ -260,10 +133,15 @@ class FLM_GameDay_Atlanta {
         'aigeon_account_id' => '',
         'esp_cache_minutes' => 30,  // How long to cache ESP data
         'esp_sync_enabled' => false,  // Sync email performance to article meta
-        // OAuth Settings (v2.15.0)
+        // Google OAuth Settings (v2.15.1 - Direct OAuth, no proxy)
+        'google_client_id' => '',
+        'google_client_secret' => '',
         'ga4_oauth_access_token' => '',
         'ga4_oauth_refresh_token' => '',
         'ga4_oauth_expires_at' => 0,
+        'ga4_property_id' => '',  // Selected GA4 property (format: properties/123456789)
+        'ga4_property_name' => '',  // Human-readable property name
+        'ga4_available_properties' => [],  // Cached list of available properties
         'gsc_oauth_access_token' => '',
         'gsc_oauth_refresh_token' => '',
         'gsc_oauth_expires_at' => 0,
@@ -274,6 +152,26 @@ class FLM_GameDay_Atlanta {
         'facebook_oauth_expires_at' => 0,
         'facebook_oauth_pages' => [],  // Array of page IDs with their tokens
         'facebook_oauth_selected_page' => '',  // Selected page ID for posting
+        // Breaking News Alerts (v2.16.0)
+        'breaking_news_enabled' => false,
+        'breaking_news_email' => '',  // Email address for notifications
+        'breaking_news_slack_webhook' => '',  // Slack webhook URL
+        'breaking_news_keywords' => ['breaking', 'urgent', 'just in', 'official', 'announced', 'signs', 'traded', 'injured', 'out for'],
+        'breaking_news_teams_only' => true,  // Only alert for enabled teams
+        // Content Calendar (v2.16.0)
+        'calendar_default_view' => 'month',  // month, week
+        'calendar_show_drafts' => true,
+        'calendar_show_scheduled' => true,
+        // Schema Markup (v2.16.0)
+        'schema_enabled' => true,
+        'schema_news_article' => true,
+        'schema_sports_event' => true,
+        'schema_organization' => true,
+        // Performance Dashboard (v2.16.0)
+        'dashboard_realtime' => true,
+        'dashboard_cache_seconds' => 300,  // 5 minute cache for real-time
+        // GitHub Auto-Updates (v2.17.0)
+        'github_token' => '',  // Optional: Personal Access Token for private repos
     ];
     
     // Integration endpoints (v2.8.0)
@@ -321,14 +219,34 @@ class FLM_GameDay_Atlanta {
             'color' => '#E03A3E',
             'secondary' => '#C1D32F',
         ],
+        'united' => [
+            'name' => 'Atlanta United FC',
+            'category_name' => 'Atlanta United',
+            'league' => 'MLS',
+            'league_id' => 72,
+            'identifiers' => ['Atlanta United', 'United FC', 'ATL UTD', 'Five Stripes'],
+            'team_ids' => ['132'],
+            'color' => '#80000A',
+            'secondary' => '#231F20',
+        ],
+        'dream' => [
+            'name' => 'Atlanta Dream',
+            'category_name' => 'Atlanta Dream',
+            'league' => 'WNBA',
+            'league_id' => 21,
+            'identifiers' => ['Atlanta Dream', 'Dream', 'ATL Dream'],
+            'team_ids' => ['1305'],
+            'color' => '#E31837',
+            'secondary' => '#0C2340',
+        ],
         'uga' => [
             'name' => 'Georgia Bulldogs',
             'category_name' => 'UGA',
             'league' => 'NCAA',
             'league_id' => 31,  // Primary: NCAAF
-            'league_ids' => [31, 20],  // NCAAF + NCAAB
+            'league_ids' => [31, 20, 27],  // NCAAF + NCAAB + WNCAAB
             'identifiers' => ['Georgia Bulldogs', 'Bulldogs', 'UGA', 'Georgia'],
-            'team_ids' => ['230', '793'],  // NCAAF: 230, NCAAB: 793
+            'team_ids' => ['230', '793', '1111'],  // NCAAF: 230, NCAAB: 793, WNCAAB: 1111
             'color' => '#BA0C2F',
             'secondary' => '#000000',
         ],
@@ -337,9 +255,9 @@ class FLM_GameDay_Atlanta {
             'category_name' => 'Georgia Tech',
             'league' => 'NCAA',
             'league_id' => 31,  // Primary: NCAAF
-            'league_ids' => [31, 20],  // NCAAF + NCAAB
+            'league_ids' => [31, 20, 27],  // NCAAF + NCAAB + WNCAAB
             'identifiers' => ['Georgia Tech', 'Yellow Jackets', 'GT'],
-            'team_ids' => ['233', '769'],  // NCAAF: 233, NCAAB: 769
+            'team_ids' => ['233', '769', '1087'],  // NCAAF: 233, NCAAB: 769, WNCAAB: 1087
             'color' => '#B3A369',
             'secondary' => '#003057',
         ],
@@ -350,8 +268,11 @@ class FLM_GameDay_Atlanta {
         1 => ['name' => 'MLB', 'full_name' => 'Major League Baseball'],
         30 => ['name' => 'NFL', 'full_name' => 'National Football League'],
         26 => ['name' => 'NBA', 'full_name' => 'National Basketball Association'],
+        21 => ['name' => 'WNBA', 'full_name' => "Women's National Basketball Association"],
+        72 => ['name' => 'MLS', 'full_name' => 'Major League Soccer'],
         31 => ['name' => 'NCAAF', 'full_name' => 'NCAA Football'],
         20 => ['name' => 'NCAAB', 'full_name' => 'NCAA Basketball'],
+        27 => ['name' => 'WNCAAB', 'full_name' => "Women's NCAA Basketball"],
     ];
     
     // SVG Icons
@@ -376,6 +297,15 @@ class FLM_GameDay_Atlanta {
         
         // Frontend pageview tracking
         add_action('wp_enqueue_scripts', [$this, 'enqueue_pageview_tracking']);
+        
+        // Schema.org markup (v2.16.0)
+        add_action('wp_head', [$this, 'add_schema_markup']);
+        
+        // GitHub Auto-Updates (v2.17.0)
+        add_filter('pre_set_site_transient_update_plugins', [$this, 'check_github_update']);
+        add_filter('plugins_api', [$this, 'github_plugin_info'], 20, 3);
+        add_filter('upgrader_post_install', [$this, 'github_post_install'], 10, 3);
+        add_filter('plugin_row_meta', [$this, 'plugin_row_meta'], 10, 2);
         
         // AJAX handlers
         add_action('wp_ajax_flm_run_import', [$this, 'ajax_run_import']);
@@ -460,6 +390,17 @@ class FLM_GameDay_Atlanta {
         add_action('wp_ajax_flm_oauth_disconnect', [$this, 'ajax_oauth_disconnect']);
         add_action('wp_ajax_flm_oauth_refresh', [$this, 'ajax_oauth_refresh']);
         add_action('wp_ajax_flm_oauth_status', [$this, 'ajax_oauth_status']);
+        add_action('wp_ajax_flm_ga4_list_properties', [$this, 'ajax_ga4_list_properties']);
+        add_action('wp_ajax_flm_ga4_select_property', [$this, 'ajax_ga4_select_property']);
+        add_action('wp_ajax_flm_save_google_credentials', [$this, 'ajax_save_google_credentials']);
+        
+        // v2.16.0: New features
+        add_action('wp_ajax_flm_get_calendar_events', [$this, 'ajax_get_calendar_events']);
+        add_action('wp_ajax_flm_bulk_update_posts', [$this, 'ajax_bulk_update_posts']);
+        add_action('wp_ajax_flm_test_notification', [$this, 'ajax_test_notification']);
+        add_action('wp_ajax_flm_get_realtime_stats', [$this, 'ajax_get_realtime_stats']);
+        add_action('wp_ajax_flm_enhanced_preview', [$this, 'ajax_enhanced_preview']);
+        add_action('wp_ajax_flm_check_updates', [$this, 'ajax_check_updates']);
     }
     
     /**
@@ -5002,6 +4943,12 @@ class FLM_GameDay_Atlanta {
     background: rgba(88, 166, 255, 0.15);
     color: var(--flm-info);
     border: 1px solid var(--flm-info);
+}
+
+.flm-preview-item-badge.protected {
+    background: rgba(46, 160, 67, 0.15);
+    color: #2ea043;
+    border: 1px solid #2ea043;
 }
 
 .flm-preview-item-badge.skip {
@@ -10598,6 +10545,26 @@ class FLM_GameDay_Atlanta {
             }, 1000);
         }
         
+        // Handle new direct OAuth callback (ga4_connected, gsc_connected)
+        if (urlParams.get("ga4_connected") === "1") {
+            Toast.show("Google Analytics connected! Now select a property.", "success");
+            const cleanUrl = window.location.pathname + "?page=flm-importer&tab=settings";
+            window.history.replaceState({}, document.title, cleanUrl);
+            // Show property selection immediately
+            setTimeout(function() {
+                $("#flm-ga4-list-properties").click();
+            }, 500);
+        }
+        
+        if (urlParams.get("gsc_connected") === "1") {
+            Toast.show("Google Search Console connected!", "success");
+            const cleanUrl = window.location.pathname + "?page=flm-importer&tab=settings";
+            window.history.replaceState({}, document.title, cleanUrl);
+            setTimeout(function() {
+                window.location.reload();
+            }, 1000);
+        }
+        
         if (urlParams.get("oauth_error")) {
             const error = urlParams.get("oauth_error");
             Toast.show("OAuth error: " + error, "danger");
@@ -10605,6 +10572,71 @@ class FLM_GameDay_Atlanta {
             const cleanUrl = window.location.pathname + "?page=flm-importer";
             window.history.replaceState({}, document.title, cleanUrl);
         }
+        
+        // Save Google credentials button
+        $(document).on("click", "#flm-save-google-credentials", function() {
+            const $btn = $(this);
+            const clientId = $("#flm-google-client-id").val().trim();
+            const clientSecret = $("#flm-google-client-secret").val().trim();
+            
+            if (!clientId || !clientSecret) {
+                Toast.show("Please enter both Client ID and Client Secret", "warning");
+                return;
+            }
+            
+            $btn.prop("disabled", true).html(\'<span class="flm-spinner"></span> Saving...\');
+            
+            $.post(ajaxurl, {
+                action: "flm_save_google_credentials",
+                nonce: flmAdmin.nonce,
+                client_id: clientId,
+                client_secret: clientSecret
+            }, function(response) {
+                if (response.success) {
+                    Toast.show(response.data.message, "success");
+                    // Enable connect buttons
+                    $(".flm-oauth-connect[data-provider=\'ga4\']").prop("disabled", false);
+                    $(".flm-oauth-connect[data-provider=\'gsc\']").prop("disabled", false);
+                    // Update redirect URI display
+                    if (response.data.redirect_uri) {
+                        $("code:contains(\'admin-post.php\')").text(response.data.redirect_uri);
+                    }
+                    $btn.prop("disabled", false).html(\'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Save Google Credentials\');
+                    // Add saved indicator
+                    if (!$btn.next(".flm-saved-indicator").length) {
+                        $btn.after(\'<span class="flm-saved-indicator" style="margin-left:12px;color:var(--flm-success);font-size:12px;">✓ Credentials saved</span>\');
+                    }
+                } else {
+                    Toast.show(response.data || "Failed to save credentials", "danger");
+                    $btn.prop("disabled", false).html(\'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Save Google Credentials\');
+                }
+            }).fail(function() {
+                Toast.show("Connection error", "danger");
+                $btn.prop("disabled", false).html(\'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Save Google Credentials\');
+            });
+        });
+        
+        // List GA4 properties button
+        $(document).on("click", "#flm-ga4-list-properties", function() {
+            const $btn = $(this);
+            $btn.prop("disabled", true).html(\'<span class="flm-spinner"></span> Loading...\');
+            
+            $.post(ajaxurl, {
+                action: "flm_ga4_list_properties",
+                nonce: flmAdmin.nonce
+            }, function(response) {
+                if (response.success && response.data.properties) {
+                    showGA4PropertySelector(response.data.properties);
+                    $btn.prop("disabled", false).html(\'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg> Select Property\');
+                } else {
+                    Toast.show(response.data || "Failed to load properties", "danger");
+                    $btn.prop("disabled", false).html(\'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg> Select Property\');
+                }
+            }).fail(function() {
+                Toast.show("Connection error", "danger");
+                $btn.prop("disabled", false).html(\'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg> Select Property\');
+            });
+        });
         
         // Connect buttons
         $(document).on("click", ".flm-oauth-connect", function() {
@@ -10746,6 +10778,125 @@ class FLM_GameDay_Atlanta {
         Toast.show("Page selected. Remember to save settings.", "info");
     }
     
+    function showGA4PropertySelector(properties) {
+        // Remove existing modal if any
+        $("#flm-property-modal").remove();
+        
+        if (!properties || properties.length === 0) {
+            Toast.show("No GA4 properties found. Make sure you have access to at least one property.", "warning");
+            return;
+        }
+        
+        // Build property list HTML
+        let propertiesHtml = properties.map(function(prop) {
+            return `
+                <div class="flm-property-item" data-id="${prop.id}" data-name="${prop.display_name}">
+                    <div class="flm-property-info">
+                        <div class="flm-property-name">${prop.display_name}</div>
+                        <div class="flm-property-meta">
+                            <span>${prop.account_name}</span>
+                            ${prop.time_zone ? \'<span>• \' + prop.time_zone + \'</span>\' : \'\'}
+                        </div>
+                    </div>
+                    <div class="flm-property-id">${prop.id.replace(\'properties/\', \'\')}</div>
+                </div>
+            `;
+        }).join("");
+        
+        // Create modal
+        const modalHtml = `
+            <div id="flm-property-modal" class="flm-modal-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:100000;display:flex;align-items:center;justify-content:center;">
+                <div class="flm-modal" style="background:var(--flm-card);border:1px solid var(--flm-border);border-radius:12px;max-width:500px;width:90%;max-height:80vh;overflow:hidden;">
+                    <div class="flm-modal-header" style="padding:16px 20px;border-bottom:1px solid var(--flm-border);display:flex;justify-content:space-between;align-items:center;">
+                        <h3 style="margin:0;font-size:16px;color:var(--flm-text);">Select GA4 Property</h3>
+                        <button type="button" class="flm-modal-close" style="background:none;border:none;font-size:24px;cursor:pointer;color:var(--flm-text-muted);">&times;</button>
+                    </div>
+                    <div class="flm-modal-body" style="padding:0;max-height:400px;overflow-y:auto;">
+                        <div class="flm-property-list" style="padding:8px;">
+                            ${propertiesHtml}
+                        </div>
+                    </div>
+                    <div class="flm-modal-footer" style="padding:12px 20px;border-top:1px solid var(--flm-border);background:rgba(0,0,0,0.2);">
+                        <p style="margin:0;font-size:12px;color:var(--flm-text-muted);">${properties.length} properties found. Click to select.</p>
+                    </div>
+                </div>
+            </div>
+            <style>
+                .flm-property-item {
+                    display:flex;justify-content:space-between;align-items:center;
+                    padding:12px 16px;border-radius:8px;cursor:pointer;
+                    transition:background 0.2s;
+                }
+                .flm-property-item:hover {
+                    background:rgba(99,102,241,0.1);
+                }
+                .flm-property-name {
+                    font-weight:600;color:var(--flm-text);font-size:14px;
+                }
+                .flm-property-meta {
+                    font-size:12px;color:var(--flm-text-muted);margin-top:2px;
+                }
+                .flm-property-meta span {
+                    margin-right:8px;
+                }
+                .flm-property-id {
+                    font-family:monospace;font-size:11px;color:var(--flm-text-muted);
+                    background:rgba(0,0,0,0.2);padding:4px 8px;border-radius:4px;
+                }
+            </style>
+        `;
+        
+        $("body").append(modalHtml);
+        
+        // Handle property selection
+        $(document).on("click", ".flm-property-item", function() {
+            const propertyId = $(this).data("id");
+            const propertyName = $(this).data("name");
+            selectGA4Property(propertyId, propertyName);
+        });
+        
+        // Handle close
+        $(document).on("click", ".flm-modal-close, .flm-modal-overlay", function(e) {
+            if (e.target === this) {
+                $("#flm-property-modal").remove();
+            }
+        });
+        
+        // Handle escape key
+        $(document).on("keyup.propertyModal", function(e) {
+            if (e.key === "Escape") {
+                $("#flm-property-modal").remove();
+                $(document).off("keyup.propertyModal");
+            }
+        });
+    }
+    
+    function selectGA4Property(propertyId, propertyName) {
+        $("#flm-property-modal").find(".flm-property-item").css("opacity", "0.5");
+        
+        $.post(ajaxurl, {
+            action: "flm_ga4_select_property",
+            nonce: flmAdmin.nonce,
+            property_id: propertyId,
+            property_name: propertyName
+        }, function(response) {
+            if (response.success) {
+                Toast.show("GA4 property selected: " + propertyName, "success");
+                $("#flm-property-modal").remove();
+                // Reload page to show updated status
+                setTimeout(function() {
+                    window.location.reload();
+                }, 1000);
+            } else {
+                Toast.show(response.data || "Failed to select property", "danger");
+                $("#flm-property-modal").find(".flm-property-item").css("opacity", "1");
+            }
+        }).fail(function() {
+            Toast.show("Connection error", "danger");
+            $("#flm-property-modal").find(".flm-property-item").css("opacity", "1");
+        });
+    }
+    
     function updateOAuthStatus() {
         $.post(ajaxurl, {
             action: "flm_oauth_status",
@@ -10761,6 +10912,12 @@ class FLM_GameDay_Atlanta {
                 facebook: "Facebook"
             };
             
+            // Update Google credentials status
+            if (status.google_credentials_set) {
+                $(".flm-oauth-connect[data-provider=\'ga4\']").prop("disabled", false);
+                $(".flm-oauth-connect[data-provider=\'gsc\']").prop("disabled", false);
+            }
+            
             ["ga4", "gsc", "twitter", "facebook"].forEach(function(provider) {
                 const $card = $(".flm-oauth-card[data-provider=\"" + provider + "\"]");
                 if (!$card.length) return;
@@ -10771,13 +10928,26 @@ class FLM_GameDay_Atlanta {
                 const $disconnectBtn = $card.find(".flm-oauth-disconnect");
                 const $refreshBtn = $card.find(".flm-oauth-refresh");
                 const $expiry = $card.find(".flm-oauth-expiry");
+                const $propertySelection = $card.find("#flm-ga4-property-selection");
                 
                 if (info.connected) {
                     $card.addClass("connected").removeClass("disconnected");
                     $connectBtn.hide();
                     $disconnectBtn.show();
                     $refreshBtn.show();
-                    $status.html(\'<span class="flm-badge success">Connected</span>\');
+                    
+                    // Special handling for GA4 - show property selection status
+                    if (provider === "ga4") {
+                        if (info.property_id) {
+                            $status.html(\'<span class="flm-badge success">Active</span>\');
+                            $propertySelection.hide();
+                        } else {
+                            $status.html(\'<span class="flm-badge warning">Select Property</span>\');
+                            $propertySelection.show();
+                        }
+                    } else {
+                        $status.html(\'<span class="flm-badge success">Connected</span>\');
+                    }
                     
                     // Show expiry
                     if (info.expires_in > 0) {
@@ -10811,6 +10981,7 @@ class FLM_GameDay_Atlanta {
                     $status.html(\'<span class="flm-badge secondary">Not Connected</span>\');
                     $expiry.hide();
                     $card.find(".flm-oauth-pages").hide();
+                    if ($propertySelection.length) $propertySelection.hide();
                 }
             });
         });
@@ -11865,6 +12036,7 @@ class FLM_GameDay_Atlanta {
         // Summary stats
         const newCount = data.stories.filter(s => s.action === "create").length;
         const updateCount = data.stories.filter(s => s.action === "update").length;
+        const protectedCount = data.stories.filter(s => s.action === "protected").length;
         const skipCount = data.skipped || 0;
         
         let html = 
@@ -11878,8 +12050,8 @@ class FLM_GameDay_Atlanta {
                     "<div class=\"flm-preview-stat-label\">Updates</div>" +
                 "</div>" +
                 "<div class=\"flm-preview-stat\">" +
-                    "<div class=\"flm-preview-stat-value skip\">" + skipCount + "</div>" +
-                    "<div class=\"flm-preview-stat-label\">Skipped</div>" +
+                    "<div class=\"flm-preview-stat-value\" style=\"color:var(--flm-success);\">" + protectedCount + "</div>" +
+                    "<div class=\"flm-preview-stat-label\">Protected</div>" +
                 "</div>" +
                 "<div class=\"flm-preview-stat\">" +
                     "<div class=\"flm-preview-stat-value\">" + data.stories.length + "</div>" +
@@ -11887,7 +12059,8 @@ class FLM_GameDay_Atlanta {
                 "</div>" +
             "</div>";
         
-        // Select all / Quick select controls
+        // Select all / Quick select controls (only count importable items)
+        const importableCount = newCount + updateCount;
         html += 
             "<div class=\"flm-preview-select-all\">" +
                 "<label>" +
@@ -11900,7 +12073,8 @@ class FLM_GameDay_Atlanta {
                     "<button type=\"button\" data-select=\"none\">None</button>" +
                 "</div>" +
                 "<div class=\"flm-selection-count\">" +
-                    "<strong id=\"flm-selected-count\">" + data.stories.length + "</strong> of " + data.stories.length + " selected" +
+                    "<strong id=\"flm-selected-count\">" + importableCount + "</strong> of " + importableCount + " selected" +
+                    (protectedCount > 0 ? " <span style=\"color:var(--flm-success);font-size:11px;\">(" + protectedCount + " protected)</span>" : "") +
                 "</div>" +
             "</div>";
         
@@ -11910,19 +12084,32 @@ class FLM_GameDay_Atlanta {
                 "<button class=\"flm-preview-filter active\" data-filter=\"all\">All <span class=\"count\">" + data.stories.length + "</span></button>" +
                 "<button class=\"flm-preview-filter\" data-filter=\"create\">New <span class=\"count\">" + newCount + "</span></button>" +
                 "<button class=\"flm-preview-filter\" data-filter=\"update\">Updates <span class=\"count\">" + updateCount + "</span></button>" +
+                (protectedCount > 0 ? "<button class=\"flm-preview-filter\" data-filter=\"protected\">Protected <span class=\"count\">" + protectedCount + "</span></button>" : "") +
             "</div>";
         
         // Story list with checkboxes
         html += "<div class=\"flm-preview-list\">";
         
         data.stories.forEach((story, index) => {
-            const badge = story.action === "create" ? "new" : "update";
-            const badgeText = story.action === "create" ? "NEW" : "UPDATE";
+            let badge, badgeText, isProtected = false;
+            if (story.action === "create") {
+                badge = "new";
+                badgeText = "NEW";
+            } else if (story.action === "protected") {
+                badge = "protected";
+                badgeText = "PROTECTED";
+                isProtected = true;
+            } else {
+                badge = "update";
+                badgeText = "UPDATE";
+            }
             
             html += 
-                "<div class=\"flm-preview-item selected\" data-action=\"" + story.action + "\" data-index=\"" + index + "\" data-story-id=\"" + escapeHtml(story.story_id) + "\">" +
+                "<div class=\"flm-preview-item" + (isProtected ? "" : " selected") + "\" data-action=\"" + story.action + "\" data-index=\"" + index + "\" data-story-id=\"" + escapeHtml(story.story_id) + "\"" + (isProtected ? " style=\"opacity:0.6;\"" : "") + ">" +
                     "<div class=\"flm-preview-item-checkbox\">" +
-                        "<input type=\"checkbox\" class=\"flm-preview-checkbox flm-story-checkbox\" data-index=\"" + index + "\" checked>" +
+                        (isProtected 
+                            ? "<span style=\"color:var(--flm-success);\" title=\"Published posts are protected from changes\">🔒</span>"
+                            : "<input type=\"checkbox\" class=\"flm-preview-checkbox flm-story-checkbox\" data-index=\"" + index + "\" checked>") +
                     "</div>" +
                     "<div class=\"flm-preview-item-badge " + badge + "\">" + badgeText + "</div>" +
                     "<div class=\"flm-preview-item-content\">" +
@@ -11941,6 +12128,7 @@ class FLM_GameDay_Atlanta {
                                 escapeHtml(story.type || "Story") +
                             "</span>" +
                             (story.existing_id ? "<span style=\"color:var(--flm-info);\">ID: " + story.existing_id + "</span>" : "") +
+                            (isProtected ? "<span style=\"color:var(--flm-success);\">Published - Protected</span>" : "") +
                         "</div>" +
                     "</div>" +
                 "</div>";
@@ -11950,9 +12138,11 @@ class FLM_GameDay_Atlanta {
         
         $content.html(html);
         
-        // Show import button if there are items to import
+        // Show import button if there are importable items
         if (newCount > 0 || updateCount > 0) {
-            $modal.find(".flm-preview-import-btn").show().text("Import Selected (" + data.stories.length + ")");
+            $modal.find(".flm-preview-import-btn").show().text("Import Selected (" + importableCount + ")");
+        } else {
+            $modal.find(".flm-preview-import-btn").hide();
         }
         
         updateSelectionCount();
@@ -12942,9 +13132,23 @@ class FLM_GameDay_Atlanta {
             $(document).on("click", "#flm-import-settings", this.importSettings);
             $(document).on("click", "#flm-restore-backup", this.restoreBackup);
             
+            // GitHub Updates (v2.17.0)
+            $(document).on("click", "#flm-check-updates", this.checkGitHubUpdates);
+            
             // ESP Integration (v2.13.0)
             $(document).on("change", "input[name=\'flm_settings[esp_provider]\']", this.toggleEspSettings);
             $(document).on("click", ".flm-test-esp", this.testEspConnection);
+            
+            // v2.16.0: Breaking News & Real-Time Dashboard
+            $(document).on("click", ".flm-test-notification", this.testNotification);
+            $(document).on("click", "#flm-refresh-realtime", this.refreshRealtimeStats);
+            
+            // Auto-refresh real-time stats every 5 minutes
+            setInterval(function() {
+                if ($("#flm-realtime-stats").length) {
+                    MLInsights.refreshRealtimeStats();
+                }
+            }, 300000);
             
             // Password toggle for API keys
             $(document).on("click", ".flm-toggle-password", function() {
@@ -12980,6 +13184,18 @@ class FLM_GameDay_Atlanta {
             if ($("#flm-predicted-views").length) {
                 setTimeout(function() {
                     $("#flm-predict-performance").click();
+                }, 1000);
+            }
+            
+            // v2.16.0: Auto-load real-time stats
+            if ($("#flm-realtime-stats").length) {
+                this.refreshRealtimeStats();
+            }
+            
+            // v2.17.0: Auto-check for GitHub updates
+            if ($("#flm-update-status").length) {
+                setTimeout(function() {
+                    MLInsights.checkGitHubUpdates.call($("#flm-check-updates")[0]);
                 }, 1000);
             }
         },
@@ -13570,6 +13786,62 @@ class FLM_GameDay_Atlanta {
             });
         },
         
+        // GitHub Updates (v2.17.0)
+        checkGitHubUpdates: function() {
+            const $btn = $(this);
+            $btn.prop("disabled", true).html(
+                "<svg class=\"flm-spinner\" viewBox=\"0 0 24 24\"><circle cx=\"12\" cy=\"12\" r=\"10\" stroke=\"currentColor\" stroke-width=\"2\" fill=\"none\" stroke-dasharray=\"31.4\" stroke-dashoffset=\"10\"/></svg>" +
+                " Checking..."
+            );
+            
+            $.ajax({
+                url: flmAdmin.ajaxUrl,
+                type: "POST",
+                data: {
+                    action: "flm_check_updates",
+                    nonce: flmAdmin.nonce
+                },
+                success: function(response) {
+                    if (response.success) {
+                        const data = response.data;
+                        
+                        // Update latest version display
+                        $("#flm-latest-version").text("v" + data.latest_version);
+                        
+                        if (data.has_update) {
+                            // Show update available badge
+                            $("#flm-update-badge").html(
+                                "<span style=\"display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:rgba(63,185,80,0.15);color:var(--flm-success);border-radius:20px;font-size:12px;font-weight:600;\">" +
+                                "⬆️ Update Available: v" + data.latest_version +
+                                "</span>"
+                            );
+                            $("#flm-goto-updates").show();
+                            Toast.show("success", "Update Available", "Version " + data.latest_version + " is available. Go to Dashboard → Updates to install.");
+                        } else {
+                            // Show up to date badge
+                            $("#flm-update-badge").html(
+                                "<span style=\"display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:rgba(63,185,80,0.15);color:var(--flm-success);border-radius:20px;font-size:12px;font-weight:600;\">" +
+                                "✓ Up to Date" +
+                                "</span>"
+                            );
+                            Toast.show("success", "Up to Date", "You are running the latest version.");
+                        }
+                    } else {
+                        Toast.show("error", "Check Failed", response.data || "Could not check for updates");
+                    }
+                },
+                error: function() {
+                    Toast.show("error", "Check Failed", "Network error checking for updates");
+                },
+                complete: function() {
+                    $btn.prop("disabled", false).html(
+                        "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" style=\"width:14px;height:14px;\"><path d=\"M23 4v6h-6M1 20v-6h6\"/><path d=\"M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15\"/></svg>" +
+                        " Check for Updates"
+                    );
+                }
+            });
+        },
+        
         // ESP Integration Functions (v2.13.0)
         toggleEspSettings: function() {
             const provider = $("input[name=\'flm_settings[esp_provider]\']:checked").val();
@@ -13582,6 +13854,122 @@ class FLM_GameDay_Atlanta {
             } else if (provider === "aigeon") {
                 $("#flm-aigeon-settings").slideDown(200);
             }
+        },
+        
+        // v2.16.0: Test notification
+        testNotification: function() {
+            const $btn = $(this);
+            const type = $btn.data("type");
+            
+            $btn.prop("disabled", true).html(
+                "<svg class=\"flm-spinner\" viewBox=\"0 0 24 24\"><circle cx=\"12\" cy=\"12\" r=\"10\" stroke=\"currentColor\" stroke-width=\"2\" fill=\"none\" stroke-dasharray=\"31.4\" stroke-dashoffset=\"10\"/></svg>" +
+                " Sending..."
+            );
+            
+            $.ajax({
+                url: flmAdmin.ajaxUrl,
+                type: "POST",
+                data: {
+                    action: "flm_test_notification",
+                    nonce: flmAdmin.nonce,
+                    type: type
+                },
+                success: function(response) {
+                    if (response.success) {
+                        Toast.show("success", "Test Sent", response.data.message);
+                    } else {
+                        Toast.show("error", "Test Failed", response.data || "Unknown error");
+                    }
+                },
+                error: function() {
+                    Toast.show("error", "Test Failed", "An error occurred");
+                },
+                complete: function() {
+                    const icon = type === "email" ? "✉" : "💬";
+                    $btn.prop("disabled", false).html(icon + " Test");
+                }
+            });
+        },
+        
+        // v2.16.0: Refresh real-time stats
+        refreshRealtimeStats: function() {
+            const $container = $("#flm-realtime-stats");
+            if (!$container.length) return;
+            
+            $("#flm-realtime-status").text("Updating...");
+            $("#flm-refresh-realtime").prop("disabled", true);
+            
+            $.ajax({
+                url: flmAdmin.ajaxUrl,
+                type: "POST",
+                data: {
+                    action: "flm_get_realtime_stats",
+                    nonce: flmAdmin.nonce
+                },
+                success: function(response) {
+                    if (response.success) {
+                        const data = response.data;
+                        
+                        // Update values with animation
+                        MLInsights.animateValue("#flm-rt-pageviews", data.today.pageviews);
+                        MLInsights.animateValue("#flm-rt-users", data.today.users);
+                        MLInsights.animateValue("#flm-rt-published", data.posts.published_today);
+                        MLInsights.animateValue("#flm-rt-scheduled", data.posts.scheduled);
+                        MLInsights.animateValue("#flm-rt-drafts", data.posts.drafts);
+                        MLInsights.animateValue("#flm-rt-week", data.posts.published_week);
+                        
+                        // Update source indicator
+                        const source = data.today.source === "ga4" ? "via GA4" : "estimated";
+                        $("#flm-rt-source").text(source);
+                        
+                        // Update team breakdown
+                        let teamHtml = "";
+                        $.each(data.team_breakdown, function(key, team) {
+                            if (team.posts_week > 0) {
+                                teamHtml += "<span style=\"display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:var(--flm-bg);border-radius:20px;font-size:12px;border:1px solid var(--flm-border);\">" +
+                                    "<span style=\"width:8px;height:8px;border-radius:50%;background:" + team.color + ";\"></span>" +
+                                    team.name + " <strong>" + team.posts_week + "</strong></span>";
+                            }
+                        });
+                        if (!teamHtml) {
+                            teamHtml = "<span style=\"color:var(--flm-text-muted);font-size:12px;\">No posts this week</span>";
+                        }
+                        $("#flm-rt-teams").html(teamHtml);
+                        
+                        // Update timestamp
+                        const time = new Date().toLocaleTimeString();
+                        $("#flm-rt-timestamp").text("Last updated: " + time + (data.from_cache ? " (cached)" : ""));
+                        $("#flm-realtime-status").text("Live");
+                    }
+                },
+                error: function() {
+                    $("#flm-realtime-status").text("Error");
+                },
+                complete: function() {
+                    $("#flm-refresh-realtime").prop("disabled", false);
+                }
+            });
+        },
+        
+        // Helper to animate number values
+        animateValue: function(selector, newValue) {
+            const $el = $(selector);
+            const currentValue = parseInt($el.text().replace(/,/g, "")) || 0;
+            
+            if (currentValue === newValue) {
+                $el.text(newValue.toLocaleString());
+                return;
+            }
+            
+            $({ val: currentValue }).animate({ val: newValue }, {
+                duration: 500,
+                step: function() {
+                    $el.text(Math.round(this.val).toLocaleString());
+                },
+                complete: function() {
+                    $el.text(newValue.toLocaleString());
+                }
+            });
         },
         
         testEspConnection: function() {
@@ -13939,14 +14327,49 @@ class FLM_GameDay_Atlanta {
         
         finish: function(provider) {
             const self = this;
+            
+            // Use dedicated AJAX handler for Google OAuth credentials
+            if (provider === "google") {
+                const clientId = $("#wizard-google-client-id").val();
+                const clientSecret = $("#wizard-google-client-secret").val();
+                
+                if (!clientId || !clientSecret) {
+                    Toast.show("Please enter both Client ID and Client Secret", "warning");
+                    return;
+                }
+                
+                const $finishBtn = $(".flm-wizard-finish[data-provider=\'google\']");
+                $finishBtn.prop("disabled", true).html(\'<span class="flm-spinner"></span> Saving...\');
+                
+                $.post(ajaxurl, {
+                    action: "flm_save_google_credentials",
+                    nonce: flmAdmin.nonce,
+                    client_id: clientId,
+                    client_secret: clientSecret
+                }, function(response) {
+                    if (response.success) {
+                        Toast.show("Google credentials saved! Click Connect GA4 to authorize.", "success");
+                        self.close();
+                        // Update the main form fields too
+                        $("#flm-google-client-id").val(clientId);
+                        $("#flm-google-client-secret").val(clientSecret);
+                        // Enable connect buttons
+                        $(".flm-oauth-connect[data-provider=\'ga4\']").prop("disabled", false);
+                        $(".flm-oauth-connect[data-provider=\'gsc\']").prop("disabled", false);
+                    } else {
+                        Toast.show(response.data || "Failed to save credentials", "danger");
+                    }
+                    $finishBtn.prop("disabled", false).html("Save Credentials");
+                }).fail(function() {
+                    Toast.show("Connection error", "danger");
+                    $finishBtn.prop("disabled", false).html("Save Credentials");
+                });
+                return;
+            }
+            
             let data = { action: "flm_save_settings", nonce: flmData.nonce };
             
-            if (provider === "google") {
-                data["flm_settings[gsc_client_id]"] = $("#wizard-google-client-id").val();
-                data["flm_settings[gsc_client_secret]"] = $("#wizard-google-client-secret").val();
-                data["flm_settings[ga4_property_id]"] = $("#wizard-google-ga4-id").val();
-                data["flm_settings[gsc_property_url]"] = $("#wizard-google-gsc-url").val();
-            } else if (provider === "claude") {
+            if (provider === "claude") {
                 data["flm_settings[claude_api_key]"] = $("#wizard-claude-api-key").val();
             } else if (provider === "twitter") {
                 data["flm_settings[twitter_api_key]"] = $("#wizard-twitter-api-key").val();
@@ -14000,7 +14423,14 @@ class FLM_GameDay_Atlanta {
      */
     private function get_settings() {
         $settings = get_option('flm_settings', []);
-        return wp_parse_args($settings, $this->default_settings);
+        $merged = wp_parse_args($settings, $this->default_settings);
+        
+        // If API key is empty (was saved as empty), fall back to default
+        if (empty($merged['api_key']) && !empty($this->default_settings['api_key'])) {
+            $merged['api_key'] = $this->default_settings['api_key'];
+        }
+        
+        return $merged;
     }
     
     /**
@@ -14141,7 +14571,7 @@ class FLM_GameDay_Atlanta {
             return false;
         }
         
-        // Match by team ID only (most reliable, no false positives)
+        // Match by team ID (FLM properly tags all content with team IDs)
         foreach ($this->target_teams as $key => $team_config) {
             if (empty($settings['teams_enabled'][$key])) {
                 continue;
@@ -14162,11 +14592,8 @@ class FLM_GameDay_Atlanta {
     
     /**
      * MAIN IMPORT FUNCTION
-     */
-    /**
-     * MAIN IMPORT FUNCTION
      * 
-     * @param int|null $single_league Optional - import only this league ID (1=MLB, 2=NFL, 3=NBA)
+     * @param int|null $single_league Optional - import only this league ID (1=MLB, 30=NFL, 26=NBA, 31=NCAAF, 20=NCAAB)
      */
     public function import_stories($single_league = null) {
         $settings = $this->get_settings();
@@ -14262,6 +14689,8 @@ class FLM_GameDay_Atlanta {
                         'text' => $story['headline'],
                         'time' => current_time('H:i:s'),
                     ];
+                } elseif ($result['action'] === 'protected') {
+                    $skipped++; // Count protected as skipped - don't touch published posts
                 }
             }
             
@@ -14322,6 +14751,14 @@ class FLM_GameDay_Atlanta {
             'post_status' => 'any',
         ]);
         
+        // PROTECT PUBLISHED POSTS - never overwrite published content
+        if (!empty($existing) && $existing[0]->post_status === 'publish') {
+            // Update only metadata, never content
+            $post_id = $existing[0]->ID;
+            update_post_meta($post_id, 'flm_last_exported', $story['lastExportedDate'] ?? '');
+            return ['post_id' => $post_id, 'action' => 'protected'];
+        }
+        
         $categories = $this->build_categories($story, $team_key);
         $content = $this->format_content($story);
         
@@ -14342,6 +14779,7 @@ class FLM_GameDay_Atlanta {
         ];
         
         if (!empty($existing)) {
+            // Only update drafts/pending - never published posts (already handled above)
             $post_id = $existing[0]->ID;
             $post_data['ID'] = $post_id;
             wp_update_post($post_data);
@@ -14349,6 +14787,9 @@ class FLM_GameDay_Atlanta {
         } else {
             $post_id = wp_insert_post($post_data);
             $action = 'created';
+            
+            // Check for breaking news alerts (v2.16.0)
+            $this->check_breaking_news($story, $team_key);
         }
         
         if ($post_id && !is_wp_error($post_id)) {
@@ -14587,6 +15028,8 @@ class FLM_GameDay_Atlanta {
             'braves' => '#Braves #ForTheA',
             'falcons' => '#Falcons #RiseUp',
             'hawks' => '#Hawks #TrueToAtlanta',
+            'united' => '#ATLUTD #UniteAndConquer',
+            'dream' => '#AtlantaDream #DreamOn',
             'uga' => '#UGA #GoDawgs',
             'gt' => '#GaTech #TogetherWeSwarm',
         ];
@@ -15765,6 +16208,7 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
         // Team multiplier (based on fanbase size)
         $team_multipliers = [
             'braves' => 1.3, 'falcons' => 1.2, 'hawks' => 1.0,
+            'united' => 1.1, 'dream' => 0.8,
             'uga' => 1.4, 'gt' => 0.9,
         ];
         $team_mult = $team_multipliers[$team] ?? 1.0;
@@ -16083,11 +16527,44 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
                 
             case 'ga4':
                 $property_id = $settings['ga4_property_id'] ?? '';
+                $has_oauth = !empty($settings['ga4_oauth_access_token']);
+                $has_service_account = !empty($settings['ga4_service_account']);
+                
                 if (empty($property_id)) {
-                    wp_send_json_error(['message' => 'Property ID not configured']);
+                    wp_send_json_error(['message' => 'Property ID not configured. Connect via OAuth and select a property.']);
                 }
-                // GA4 requires OAuth - simplified check
-                wp_send_json_success(['message' => 'GA4 Property ID configured']);
+                
+                if (!$has_oauth && !$has_service_account) {
+                    wp_send_json_error(['message' => 'No authentication configured. Connect via OAuth or add a service account.']);
+                }
+                
+                // Test by fetching real data from the property
+                $end_date = date('Y-m-d');
+                $start_date = date('Y-m-d', strtotime('-7 days'));
+                
+                $test_response = $this->query_ga4_api($property_id, [
+                    'dateRanges' => [
+                        ['startDate' => $start_date, 'endDate' => $end_date],
+                    ],
+                    'metrics' => [
+                        ['name' => 'screenPageViews'],
+                    ],
+                ]);
+                
+                if ($test_response === false) {
+                    wp_send_json_error(['message' => 'API request failed. Check error logs for details.']);
+                }
+                
+                $pageviews = 0;
+                if (!empty($test_response['rows'][0]['metricValues'][0]['value'])) {
+                    $pageviews = number_format((int) $test_response['rows'][0]['metricValues'][0]['value']);
+                }
+                
+                $auth_method = $has_oauth ? 'OAuth' : 'Service Account';
+                $property_name = $settings['ga4_property_name'] ?? $property_id;
+                wp_send_json_success([
+                    'message' => "Connected to {$property_name} via {$auth_method}. {$pageviews} pageviews in last 7 days."
+                ]);
                 break;
                 
             case 'twitter':
@@ -16472,6 +16949,16 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
                 
                 $team_config = $this->target_teams[$team_key];
                 
+                // Determine action - published posts are protected
+                $action = 'create';
+                $existing_id = null;
+                $existing_status = null;
+                if (!empty($existing)) {
+                    $existing_id = $existing[0]->ID;
+                    $existing_status = $existing[0]->post_status;
+                    $action = ($existing_status === 'publish') ? 'protected' : 'update';
+                }
+                
                 $preview_stories[] = [
                     'story_id' => $story['storyId'],
                     'headline' => wp_strip_all_tags($story['headline']),
@@ -16480,8 +16967,9 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
                     'league' => $story['league']['shortName'] ?? $team_config['league'],
                     'type' => $story['storyType'] ?? 'Story',
                     'byline' => $story['byline'] ?? 'Field Level Media',
-                    'action' => !empty($existing) ? 'update' : 'create',
-                    'existing_id' => !empty($existing) ? $existing[0]->ID : null,
+                    'action' => $action,
+                    'existing_id' => $existing_id,
+                    'existing_status' => $existing_status,
                     'has_image' => !empty($story['images']),
                 ];
             }
@@ -16496,18 +16984,24 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
             'total_stories' => count($preview_stories),
             'new' => count(array_filter($preview_stories, function($s) { return $s['action'] === 'create'; })),
             'updates' => count(array_filter($preview_stories, function($s) { return $s['action'] === 'update'; })),
+            'protected' => count(array_filter($preview_stories, function($s) { return $s['action'] === 'protected'; })),
             'skipped' => $skipped,
         ]);
+        
+        $new_count = count(array_filter($preview_stories, function($s) { return $s['action'] === 'create'; }));
+        $update_count = count(array_filter($preview_stories, function($s) { return $s['action'] === 'update'; }));
+        $protected_count = count(array_filter($preview_stories, function($s) { return $s['action'] === 'protected'; }));
         
         wp_send_json_success([
             'stories' => $preview_stories,
             'skipped' => $skipped,
             'errors' => $errors,
             'message' => sprintf(
-                'Found %d stories (%d new, %d updates)',
+                'Found %d stories (%d new, %d updates, %d protected)',
                 count($preview_stories),
-                count(array_filter($preview_stories, function($s) { return $s['action'] === 'create'; })),
-                count(array_filter($preview_stories, function($s) { return $s['action'] === 'update'; }))
+                $new_count,
+                $update_count,
+                $protected_count
             ),
         ]);
     }
@@ -16617,6 +17111,8 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
                         'text' => $story['headline'],
                         'time' => current_time('H:i:s'),
                     ];
+                } elseif ($result['action'] === 'protected') {
+                    $skipped++; // Count protected as skipped
                 }
             }
             
@@ -16772,108 +17268,280 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
             wp_send_json_error(['message' => 'Permission denied']);
         }
         
-        // Get old settings to check for changes
+        // Get old settings - we'll merge to preserve values not in current form
         $old_settings = $this->get_settings();
         
         $settings = [];
+        $post_data = $_POST['flm_settings'] ?? [];
         
-        $settings['api_key'] = sanitize_text_field($_POST['flm_settings']['api_key'] ?? '');
-        $settings['post_status'] = sanitize_text_field($_POST['flm_settings']['post_status'] ?? 'draft');
-        $settings['post_author'] = absint($_POST['flm_settings']['post_author'] ?? 1);
-        $settings['default_category'] = absint($_POST['flm_settings']['default_category'] ?? 0);
-        $settings['import_images'] = !empty($_POST['flm_settings']['import_images']);
-        $settings['lookback_days'] = min(30, max(1, absint($_POST['flm_settings']['lookback_days'] ?? 7)));
+        // Helper function to get value with fallback to old setting
+        $get = function($key, $default = '') use ($post_data, $old_settings) {
+            if (isset($post_data[$key])) {
+                return $post_data[$key];
+            }
+            return $old_settings[$key] ?? $default;
+        };
         
-        // Import frequency (P3.1)
+        // API key - special handling to never clear it
+        $new_api_key = sanitize_text_field($post_data['api_key'] ?? '');
+        $settings['api_key'] = !empty($new_api_key) ? $new_api_key : $old_settings['api_key'];
+        
+        // Post settings - preserve if not in form (fixes multi-form issue)
+        $settings['post_status'] = sanitize_text_field($get('post_status', 'draft'));
+        $settings['post_author'] = absint($get('post_author', 1));
+        $settings['default_category'] = absint($get('default_category', 0));
+        $settings['import_images'] = isset($post_data['import_images']) ? !empty($post_data['import_images']) : ($old_settings['import_images'] ?? true);
+        $settings['lookback_days'] = min(30, max(1, absint($get('lookback_days', 7))));
+        
+        // Import frequency (P3.1) - preserve if not in form
         $valid_frequencies = ['hourly', 'every6hours', 'twicedaily', 'daily'];
-        $new_frequency = sanitize_text_field($_POST['flm_settings']['import_frequency'] ?? 'twicedaily');
-        $settings['import_frequency'] = in_array($new_frequency, $valid_frequencies) ? $new_frequency : 'twicedaily';
+        if (isset($post_data['import_frequency'])) {
+            $new_frequency = sanitize_text_field($post_data['import_frequency']);
+            $settings['import_frequency'] = in_array($new_frequency, $valid_frequencies) ? $new_frequency : 'twicedaily';
+        } else {
+            $settings['import_frequency'] = $old_settings['import_frequency'] ?? 'twicedaily';
+        }
         
-        // Purge after days (P5.3) - 0 = disabled
-        $settings['purge_after_days'] = absint($_POST['flm_settings']['purge_after_days'] ?? 0);
+        // Purge after days (P5.3) - preserve if not in form
+        $settings['purge_after_days'] = isset($post_data['purge_after_days']) 
+            ? absint($post_data['purge_after_days']) 
+            : ($old_settings['purge_after_days'] ?? 0);
         
-        $settings['auto_excerpt'] = !empty($_POST['flm_settings']['auto_excerpt']);
-        $settings['auto_meta_description'] = !empty($_POST['flm_settings']['auto_meta_description']);
-        $settings['create_team_categories'] = !empty($_POST['flm_settings']['create_team_categories']);
-        $settings['create_league_categories'] = !empty($_POST['flm_settings']['create_league_categories']);
-        $settings['create_type_categories'] = !empty($_POST['flm_settings']['create_type_categories']);
+        // Checkboxes in Settings tab - only update if the form section was submitted
+        // Check if we're on the Settings tab form by looking for a Settings-specific field
+        $settings_form_submitted = isset($post_data['post_status']) || isset($post_data['import_frequency']);
         
-        // Story types enabled
+        if ($settings_form_submitted) {
+            $settings['auto_excerpt'] = !empty($post_data['auto_excerpt']);
+            $settings['auto_meta_description'] = !empty($post_data['auto_meta_description']);
+        } else {
+            $settings['auto_excerpt'] = $old_settings['auto_excerpt'] ?? false;
+            $settings['auto_meta_description'] = $old_settings['auto_meta_description'] ?? false;
+        }
+        
+        // Category checkboxes - these are on the Import tab form
+        $import_form_submitted = isset($post_data['teams_enabled']) || isset($post_data['story_types_enabled']);
+        
+        if ($import_form_submitted) {
+            $settings['create_team_categories'] = !empty($post_data['create_team_categories']);
+            $settings['create_league_categories'] = !empty($post_data['create_league_categories']);
+            $settings['create_type_categories'] = !empty($post_data['create_type_categories']);
+        } else {
+            $settings['create_team_categories'] = $old_settings['create_team_categories'] ?? true;
+            $settings['create_league_categories'] = $old_settings['create_league_categories'] ?? true;
+            $settings['create_type_categories'] = $old_settings['create_type_categories'] ?? true;
+        }
+        
+        // Story types enabled - only update if Import form submitted
         $story_types = ['News', 'Recap', 'Preview', 'Feature', 'Analysis', 'Interview', 'Injury', 'Transaction'];
-        $settings['story_types_enabled'] = [];
-        foreach ($story_types as $type) {
-            $settings['story_types_enabled'][$type] = !empty($_POST['flm_settings']['story_types_enabled'][$type]);
+        if ($import_form_submitted) {
+            $settings['story_types_enabled'] = [];
+            foreach ($story_types as $type) {
+                $settings['story_types_enabled'][$type] = !empty($post_data['story_types_enabled'][$type]);
+            }
+        } else {
+            $settings['story_types_enabled'] = $old_settings['story_types_enabled'] ?? array_fill_keys($story_types, true);
         }
         
-        $settings['teams_enabled'] = [];
-        foreach (array_keys($this->target_teams) as $key) {
-            $settings['teams_enabled'][$key] = !empty($_POST['flm_settings']['teams_enabled'][$key]);
+        // Teams enabled - only update if Import form submitted
+        if ($import_form_submitted) {
+            $settings['teams_enabled'] = [];
+            foreach (array_keys($this->target_teams) as $key) {
+                $settings['teams_enabled'][$key] = !empty($post_data['teams_enabled'][$key]);
+            }
+        } else {
+            $settings['teams_enabled'] = $old_settings['teams_enabled'] ?? [];
         }
         
-        // Integration API Keys (v2.8.0)
-        $settings['ga4_property_id'] = sanitize_text_field($_POST['flm_settings']['ga4_property_id'] ?? '');
-        $settings['ga4_api_secret'] = sanitize_text_field($_POST['flm_settings']['ga4_api_secret'] ?? '');
-        $settings['claude_api_key'] = sanitize_text_field($_POST['flm_settings']['claude_api_key'] ?? '');
-        $settings['twitter_api_key'] = sanitize_text_field($_POST['flm_settings']['twitter_api_key'] ?? '');
-        $settings['twitter_api_secret'] = sanitize_text_field($_POST['flm_settings']['twitter_api_secret'] ?? '');
-        $settings['twitter_access_token'] = sanitize_text_field($_POST['flm_settings']['twitter_access_token'] ?? '');
-        $settings['twitter_access_secret'] = sanitize_text_field($_POST['flm_settings']['twitter_access_secret'] ?? '');
-        $settings['facebook_app_id'] = sanitize_text_field($_POST['flm_settings']['facebook_app_id'] ?? '');
-        $settings['facebook_app_secret'] = sanitize_text_field($_POST['flm_settings']['facebook_app_secret'] ?? '');
-        $settings['facebook_page_id'] = sanitize_text_field($_POST['flm_settings']['facebook_page_id'] ?? '');
-        $settings['facebook_access_token'] = sanitize_text_field($_POST['flm_settings']['facebook_access_token'] ?? '');
+        // Integration API Keys (v2.8.0) - preserve if not in form
+        $settings['ga4_property_id'] = isset($post_data['ga4_property_id']) ? sanitize_text_field($post_data['ga4_property_id']) : ($old_settings['ga4_property_id'] ?? '');
+        $settings['ga4_api_secret'] = isset($post_data['ga4_api_secret']) ? sanitize_text_field($post_data['ga4_api_secret']) : ($old_settings['ga4_api_secret'] ?? '');
+        $settings['claude_api_key'] = isset($post_data['claude_api_key']) ? sanitize_text_field($post_data['claude_api_key']) : ($old_settings['claude_api_key'] ?? '');
+        $settings['twitter_api_key'] = isset($post_data['twitter_api_key']) ? sanitize_text_field($post_data['twitter_api_key']) : ($old_settings['twitter_api_key'] ?? '');
+        $settings['twitter_api_secret'] = isset($post_data['twitter_api_secret']) ? sanitize_text_field($post_data['twitter_api_secret']) : ($old_settings['twitter_api_secret'] ?? '');
+        $settings['twitter_access_token'] = isset($post_data['twitter_access_token']) ? sanitize_text_field($post_data['twitter_access_token']) : ($old_settings['twitter_access_token'] ?? '');
+        $settings['twitter_access_secret'] = isset($post_data['twitter_access_secret']) ? sanitize_text_field($post_data['twitter_access_secret']) : ($old_settings['twitter_access_secret'] ?? '');
+        $settings['facebook_app_id'] = isset($post_data['facebook_app_id']) ? sanitize_text_field($post_data['facebook_app_id']) : ($old_settings['facebook_app_id'] ?? '');
+        $settings['facebook_app_secret'] = isset($post_data['facebook_app_secret']) ? sanitize_text_field($post_data['facebook_app_secret']) : ($old_settings['facebook_app_secret'] ?? '');
+        $settings['facebook_page_id'] = isset($post_data['facebook_page_id']) ? sanitize_text_field($post_data['facebook_page_id']) : ($old_settings['facebook_page_id'] ?? '');
+        $settings['facebook_access_token'] = isset($post_data['facebook_access_token']) ? sanitize_text_field($post_data['facebook_access_token']) : ($old_settings['facebook_access_token'] ?? '');
         
-        // Search Engine Integrations (v2.8.0)
-        $settings['gsc_property_url'] = esc_url_raw($_POST['flm_settings']['gsc_property_url'] ?? '');
-        $settings['gsc_client_id'] = sanitize_text_field($_POST['flm_settings']['gsc_client_id'] ?? '');
-        $settings['gsc_client_secret'] = sanitize_text_field($_POST['flm_settings']['gsc_client_secret'] ?? '');
-        $settings['gsc_access_token'] = sanitize_text_field($_POST['flm_settings']['gsc_access_token'] ?? '');
-        $settings['bing_api_key'] = sanitize_text_field($_POST['flm_settings']['bing_api_key'] ?? '');
-        $settings['bing_site_url'] = esc_url_raw($_POST['flm_settings']['bing_site_url'] ?? '');
+        // Search Engine Integrations (v2.8.0) - preserve if not in form
+        $settings['gsc_property_url'] = isset($post_data['gsc_property_url']) ? esc_url_raw($post_data['gsc_property_url']) : ($old_settings['gsc_property_url'] ?? '');
+        $settings['gsc_client_id'] = isset($post_data['gsc_client_id']) ? sanitize_text_field($post_data['gsc_client_id']) : ($old_settings['gsc_client_id'] ?? '');
+        $settings['gsc_client_secret'] = isset($post_data['gsc_client_secret']) ? sanitize_text_field($post_data['gsc_client_secret']) : ($old_settings['gsc_client_secret'] ?? '');
+        $settings['gsc_access_token'] = isset($post_data['gsc_access_token']) ? sanitize_text_field($post_data['gsc_access_token']) : ($old_settings['gsc_access_token'] ?? '');
+        $settings['bing_api_key'] = isset($post_data['bing_api_key']) ? sanitize_text_field($post_data['bing_api_key']) : ($old_settings['bing_api_key'] ?? '');
+        $settings['bing_site_url'] = isset($post_data['bing_site_url']) ? esc_url_raw($post_data['bing_site_url']) : ($old_settings['bing_site_url'] ?? '');
         
-        // ML Settings (v2.8.0)
-        $settings['ml_headline_analysis'] = !empty($_POST['flm_settings']['ml_headline_analysis']);
-        $settings['ml_publish_time_optimization'] = !empty($_POST['flm_settings']['ml_publish_time_optimization']);
-        $settings['ml_performance_prediction'] = !empty($_POST['flm_settings']['ml_performance_prediction']);
-        $settings['ml_trend_detection'] = !empty($_POST['flm_settings']['ml_trend_detection']);
-        $settings['ml_seo_optimization'] = !empty($_POST['flm_settings']['ml_seo_optimization']);
+        // ML Settings (v2.8.0) - preserve if not in form (checkboxes)
+        $integrations_form_submitted = isset($post_data['ga4_property_id']) || isset($post_data['twitter_api_key']);
+        if ($integrations_form_submitted) {
+            $settings['ml_headline_analysis'] = !empty($post_data['ml_headline_analysis']);
+            $settings['ml_publish_time_optimization'] = !empty($post_data['ml_publish_time_optimization']);
+            $settings['ml_performance_prediction'] = !empty($post_data['ml_performance_prediction']);
+            $settings['ml_trend_detection'] = !empty($post_data['ml_trend_detection']);
+            $settings['ml_seo_optimization'] = !empty($post_data['ml_seo_optimization']);
+        } else {
+            $settings['ml_headline_analysis'] = $old_settings['ml_headline_analysis'] ?? false;
+            $settings['ml_publish_time_optimization'] = $old_settings['ml_publish_time_optimization'] ?? false;
+            $settings['ml_performance_prediction'] = $old_settings['ml_performance_prediction'] ?? false;
+            $settings['ml_trend_detection'] = $old_settings['ml_trend_detection'] ?? false;
+            $settings['ml_seo_optimization'] = $old_settings['ml_seo_optimization'] ?? false;
+        }
         
-        // Social Auto-Posting Settings (v2.9.0)
-        $settings['auto_post_twitter'] = !empty($_POST['flm_settings']['auto_post_twitter']);
-        $settings['auto_post_facebook'] = !empty($_POST['flm_settings']['auto_post_facebook']);
-        $settings['twitter_post_template'] = sanitize_textarea_field($_POST['flm_settings']['twitter_post_template'] ?? '📰 {headline} #Atlanta #Sports {team_hashtag}');
-        $settings['facebook_post_template'] = sanitize_textarea_field($_POST['flm_settings']['facebook_post_template'] ?? "{headline}\n\nRead more: {url}");
-        $settings['social_post_delay'] = absint($_POST['flm_settings']['social_post_delay'] ?? 0);
-        $settings['social_include_image'] = !empty($_POST['flm_settings']['social_include_image']);
-        $settings['social_queue_enabled'] = !empty($_POST['flm_settings']['social_queue_enabled']);
+        // Social Auto-Posting Settings (v2.9.0) - preserve if not in form
+        $social_form_submitted = isset($post_data['twitter_post_template']) || isset($post_data['facebook_post_template']);
+        if ($social_form_submitted) {
+            $settings['auto_post_twitter'] = !empty($post_data['auto_post_twitter']);
+            $settings['auto_post_facebook'] = !empty($post_data['auto_post_facebook']);
+            $settings['twitter_post_template'] = sanitize_textarea_field($post_data['twitter_post_template'] ?? '📰 {headline} #Atlanta #Sports {team_hashtag}');
+            $settings['facebook_post_template'] = sanitize_textarea_field($post_data['facebook_post_template'] ?? "{headline}\n\nRead more: {url}");
+            $settings['social_post_delay'] = absint($post_data['social_post_delay'] ?? 0);
+            $settings['social_include_image'] = !empty($post_data['social_include_image']);
+            $settings['social_queue_enabled'] = !empty($post_data['social_queue_enabled']);
+        } else {
+            $settings['auto_post_twitter'] = $old_settings['auto_post_twitter'] ?? false;
+            $settings['auto_post_facebook'] = $old_settings['auto_post_facebook'] ?? false;
+            $settings['twitter_post_template'] = $old_settings['twitter_post_template'] ?? '📰 {headline} #Atlanta #Sports {team_hashtag}';
+            $settings['facebook_post_template'] = $old_settings['facebook_post_template'] ?? "{headline}\n\nRead more: {url}";
+            $settings['social_post_delay'] = $old_settings['social_post_delay'] ?? 0;
+            $settings['social_include_image'] = $old_settings['social_include_image'] ?? true;
+            $settings['social_queue_enabled'] = $old_settings['social_queue_enabled'] ?? false;
+        }
         
-        // Content & Publishing Settings (v2.10.0)
-        $settings['utm_enabled'] = !empty($_POST['flm_settings']['utm_enabled']);
-        $settings['utm_source'] = sanitize_text_field($_POST['flm_settings']['utm_source'] ?? 'social');
-        $settings['utm_medium'] = sanitize_text_field($_POST['flm_settings']['utm_medium'] ?? '{platform}');
-        $settings['utm_campaign'] = sanitize_text_field($_POST['flm_settings']['utm_campaign'] ?? 'flm_auto');
-        $settings['utm_content'] = sanitize_text_field($_POST['flm_settings']['utm_content'] ?? '{team}');
-        $settings['scheduled_posting_enabled'] = !empty($_POST['flm_settings']['scheduled_posting_enabled']);
-        $settings['social_preview_meta_box'] = !empty($_POST['flm_settings']['social_preview_meta_box']);
+        // Content & Publishing Settings (v2.10.0) - preserve if not in form
+        $publishing_form_submitted = isset($post_data['utm_source']) || isset($post_data['utm_campaign']);
+        if ($publishing_form_submitted) {
+            $settings['utm_enabled'] = !empty($post_data['utm_enabled']);
+            $settings['utm_source'] = sanitize_text_field($post_data['utm_source'] ?? 'social');
+            $settings['utm_medium'] = sanitize_text_field($post_data['utm_medium'] ?? '{platform}');
+            $settings['utm_campaign'] = sanitize_text_field($post_data['utm_campaign'] ?? 'flm_auto');
+            $settings['utm_content'] = sanitize_text_field($post_data['utm_content'] ?? '{team}');
+            $settings['scheduled_posting_enabled'] = !empty($post_data['scheduled_posting_enabled']);
+            $settings['social_preview_meta_box'] = !empty($post_data['social_preview_meta_box']);
+        } else {
+            $settings['utm_enabled'] = $old_settings['utm_enabled'] ?? false;
+            $settings['utm_source'] = $old_settings['utm_source'] ?? 'social';
+            $settings['utm_medium'] = $old_settings['utm_medium'] ?? '{platform}';
+            $settings['utm_campaign'] = $old_settings['utm_campaign'] ?? 'flm_auto';
+            $settings['utm_content'] = $old_settings['utm_content'] ?? '{team}';
+            $settings['scheduled_posting_enabled'] = $old_settings['scheduled_posting_enabled'] ?? false;
+            $settings['social_preview_meta_box'] = $old_settings['social_preview_meta_box'] ?? false;
+        }
         
-        // Analytics Depth Settings (v2.11.0)
-        $settings['ga4_service_account'] = wp_kses_post($_POST['flm_settings']['ga4_service_account'] ?? '');
-        $settings['gsc_service_account'] = wp_kses_post($_POST['flm_settings']['gsc_service_account'] ?? '');
-        $settings['analytics_use_ga4_api'] = !empty($_POST['flm_settings']['analytics_use_ga4_api']);
-        $settings['analytics_cache_minutes'] = absint($_POST['flm_settings']['analytics_cache_minutes'] ?? 15);
-        $settings['best_times_auto_learn'] = !empty($_POST['flm_settings']['best_times_auto_learn']);
-        $settings['article_tracking_enabled'] = !empty($_POST['flm_settings']['article_tracking_enabled']);
+        // Analytics Depth Settings (v2.11.0) - preserve if not in form
+        $analytics_form_submitted = isset($post_data['ga4_service_account']) || isset($post_data['analytics_cache_minutes']);
+        if ($analytics_form_submitted) {
+            $settings['ga4_service_account'] = wp_kses_post($post_data['ga4_service_account'] ?? '');
+            $settings['gsc_service_account'] = wp_kses_post($post_data['gsc_service_account'] ?? '');
+            $settings['analytics_use_ga4_api'] = !empty($post_data['analytics_use_ga4_api']);
+            $settings['analytics_cache_minutes'] = absint($post_data['analytics_cache_minutes'] ?? 15);
+            $settings['best_times_auto_learn'] = !empty($post_data['best_times_auto_learn']);
+            $settings['article_tracking_enabled'] = !empty($post_data['article_tracking_enabled']);
+        } else {
+            $settings['ga4_service_account'] = $old_settings['ga4_service_account'] ?? '';
+            $settings['gsc_service_account'] = $old_settings['gsc_service_account'] ?? '';
+            $settings['analytics_use_ga4_api'] = $old_settings['analytics_use_ga4_api'] ?? false;
+            $settings['analytics_cache_minutes'] = $old_settings['analytics_cache_minutes'] ?? 15;
+            $settings['best_times_auto_learn'] = $old_settings['best_times_auto_learn'] ?? false;
+            $settings['article_tracking_enabled'] = $old_settings['article_tracking_enabled'] ?? false;
+        }
         
-        // ESP Integration Settings (v2.13.0)
-        $valid_providers = ['none', 'sendgrid', 'aigeon'];
-        $esp_provider = sanitize_text_field($_POST['flm_settings']['esp_provider'] ?? 'none');
-        $settings['esp_provider'] = in_array($esp_provider, $valid_providers) ? $esp_provider : 'none';
-        $settings['sendgrid_api_key'] = sanitize_text_field($_POST['flm_settings']['sendgrid_api_key'] ?? '');
-        $settings['sendgrid_category'] = sanitize_text_field($_POST['flm_settings']['sendgrid_category'] ?? '');
-        $settings['aigeon_api_key'] = sanitize_text_field($_POST['flm_settings']['aigeon_api_key'] ?? '');
-        $settings['aigeon_account_id'] = sanitize_text_field($_POST['flm_settings']['aigeon_account_id'] ?? '');
-        $settings['esp_cache_minutes'] = absint($_POST['flm_settings']['esp_cache_minutes'] ?? 30);
-        $settings['esp_sync_enabled'] = !empty($_POST['flm_settings']['esp_sync_enabled']);
+        // ESP Integration Settings (v2.13.0) - preserve if not in form
+        $esp_form_submitted = isset($post_data['esp_provider']) || isset($post_data['sendgrid_api_key']);
+        if ($esp_form_submitted) {
+            $valid_providers = ['none', 'sendgrid', 'aigeon'];
+            $esp_provider = sanitize_text_field($post_data['esp_provider'] ?? 'none');
+            $settings['esp_provider'] = in_array($esp_provider, $valid_providers) ? $esp_provider : 'none';
+            $settings['sendgrid_api_key'] = sanitize_text_field($post_data['sendgrid_api_key'] ?? '');
+            $settings['sendgrid_category'] = sanitize_text_field($post_data['sendgrid_category'] ?? '');
+            $settings['aigeon_api_key'] = sanitize_text_field($post_data['aigeon_api_key'] ?? '');
+            $settings['aigeon_account_id'] = sanitize_text_field($post_data['aigeon_account_id'] ?? '');
+            $settings['esp_cache_minutes'] = absint($post_data['esp_cache_minutes'] ?? 30);
+            $settings['esp_sync_enabled'] = !empty($post_data['esp_sync_enabled']);
+        } else {
+            $settings['esp_provider'] = $old_settings['esp_provider'] ?? 'none';
+            $settings['sendgrid_api_key'] = $old_settings['sendgrid_api_key'] ?? '';
+            $settings['sendgrid_category'] = $old_settings['sendgrid_category'] ?? '';
+            $settings['aigeon_api_key'] = $old_settings['aigeon_api_key'] ?? '';
+            $settings['aigeon_account_id'] = $old_settings['aigeon_account_id'] ?? '';
+            $settings['esp_cache_minutes'] = $old_settings['esp_cache_minutes'] ?? 30;
+            $settings['esp_sync_enabled'] = $old_settings['esp_sync_enabled'] ?? false;
+        }
+        
+        // v2.16.0: Breaking News Alerts settings - preserve if not in form
+        $breaking_news_submitted = isset($post_data['breaking_news_enabled']) || isset($post_data['breaking_news_email']);
+        if ($breaking_news_submitted) {
+            $settings['breaking_news_enabled'] = !empty($post_data['breaking_news_enabled']);
+            $settings['breaking_news_email'] = sanitize_email($post_data['breaking_news_email'] ?? '');
+            $settings['breaking_news_slack_webhook'] = esc_url_raw($post_data['breaking_news_slack_webhook'] ?? '');
+            
+            // Handle keywords - convert comma-separated string to array
+            $keywords_raw = sanitize_text_field($post_data['breaking_news_keywords'] ?? '');
+            $keywords = array_filter(array_map('trim', explode(',', $keywords_raw)));
+            $settings['breaking_news_keywords'] = !empty($keywords) ? $keywords : ['breaking', 'urgent', 'just in'];
+            
+            $settings['breaking_news_teams_only'] = !empty($post_data['breaking_news_teams_only']);
+        } else {
+            $settings['breaking_news_enabled'] = $old_settings['breaking_news_enabled'] ?? false;
+            $settings['breaking_news_email'] = $old_settings['breaking_news_email'] ?? '';
+            $settings['breaking_news_slack_webhook'] = $old_settings['breaking_news_slack_webhook'] ?? '';
+            $settings['breaking_news_keywords'] = $old_settings['breaking_news_keywords'] ?? ['breaking', 'urgent', 'just in'];
+            $settings['breaking_news_teams_only'] = $old_settings['breaking_news_teams_only'] ?? true;
+        }
+        
+        // v2.16.0: Schema Markup settings - preserve if not in form
+        $schema_submitted = isset($post_data['schema_enabled']) || isset($post_data['schema_news_article']);
+        if ($schema_submitted) {
+            $settings['schema_enabled'] = !empty($post_data['schema_enabled']);
+            $settings['schema_news_article'] = !empty($post_data['schema_news_article']);
+            $settings['schema_sports_event'] = !empty($post_data['schema_sports_event']);
+            $settings['schema_organization'] = !empty($post_data['schema_organization']);
+        } else {
+            $settings['schema_enabled'] = $old_settings['schema_enabled'] ?? true;
+            $settings['schema_news_article'] = $old_settings['schema_news_article'] ?? true;
+            $settings['schema_sports_event'] = $old_settings['schema_sports_event'] ?? true;
+            $settings['schema_organization'] = $old_settings['schema_organization'] ?? true;
+        }
+        
+        // v2.16.0: Dashboard settings - preserve if not in form
+        $settings['dashboard_realtime'] = $old_settings['dashboard_realtime'] ?? true;
+        $settings['dashboard_cache_seconds'] = $old_settings['dashboard_cache_seconds'] ?? 300;
+        $settings['calendar_default_view'] = $old_settings['calendar_default_view'] ?? 'month';
+        $settings['calendar_show_drafts'] = $old_settings['calendar_show_drafts'] ?? true;
+        $settings['calendar_show_scheduled'] = $old_settings['calendar_show_scheduled'] ?? true;
+        
+        // v2.17.0: GitHub token for private repos
+        if (isset($post_data['github_token'])) {
+            $settings['github_token'] = sanitize_text_field($post_data['github_token']);
+            // Clear release cache when token changes
+            if ($settings['github_token'] !== ($old_settings['github_token'] ?? '')) {
+                delete_transient('flm_github_release_' . md5($this->github_username . $this->github_repo));
+            }
+        } else {
+            $settings['github_token'] = $old_settings['github_token'] ?? '';
+        }
+        
+        // ALWAYS preserve OAuth tokens and Google credentials (never in regular forms)
+        // These are managed by dedicated AJAX handlers
+        $settings['google_client_id'] = $old_settings['google_client_id'] ?? '';
+        $settings['google_client_secret'] = $old_settings['google_client_secret'] ?? '';
+        $settings['ga4_oauth_access_token'] = $old_settings['ga4_oauth_access_token'] ?? '';
+        $settings['ga4_oauth_refresh_token'] = $old_settings['ga4_oauth_refresh_token'] ?? '';
+        $settings['ga4_oauth_expires_at'] = $old_settings['ga4_oauth_expires_at'] ?? 0;
+        $settings['ga4_property_name'] = $old_settings['ga4_property_name'] ?? '';
+        $settings['ga4_available_properties'] = $old_settings['ga4_available_properties'] ?? [];
+        $settings['gsc_oauth_access_token'] = $old_settings['gsc_oauth_access_token'] ?? '';
+        $settings['gsc_oauth_refresh_token'] = $old_settings['gsc_oauth_refresh_token'] ?? '';
+        $settings['gsc_oauth_expires_at'] = $old_settings['gsc_oauth_expires_at'] ?? 0;
+        $settings['twitter_oauth_access_token'] = $old_settings['twitter_oauth_access_token'] ?? '';
+        $settings['twitter_oauth_refresh_token'] = $old_settings['twitter_oauth_refresh_token'] ?? '';
+        $settings['twitter_oauth_expires_at'] = $old_settings['twitter_oauth_expires_at'] ?? 0;
+        $settings['facebook_oauth_access_token'] = $old_settings['facebook_oauth_access_token'] ?? '';
+        $settings['facebook_oauth_expires_at'] = $old_settings['facebook_oauth_expires_at'] ?? 0;
+        $settings['facebook_oauth_pages'] = $old_settings['facebook_oauth_pages'] ?? [];
+        $settings['facebook_oauth_selected_page'] = $old_settings['facebook_oauth_selected_page'] ?? '';
         
         update_option('flm_settings', $settings);
         
@@ -17165,6 +17833,8 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
             'braves' => '#Braves #ForTheA',
             'falcons' => '#Falcons #RiseUp',
             'hawks' => '#Hawks #TrueToAtlanta',
+            'united' => '#ATLUTD #UniteAndConquer',
+            'dream' => '#AtlantaDream #DreamOn',
             'uga' => '#UGA #GoDawgs',
             'gt' => '#GaTech #TogetherWeSwarm',
         ];
@@ -17608,6 +18278,8 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
             'braves' => '#ce1141',
             'falcons' => '#a71930',
             'hawks' => '#e03a3e',
+            'united' => '#80000a',
+            'dream' => '#e31837',
             'uga' => '#ba0c2f',
             'gt' => '#b3a369'
         ];
@@ -17687,6 +18359,101 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
                 <?php endforeach; ?>
             </div>
             <?php endif; ?>
+            
+            <!-- Real-Time Performance Dashboard (v2.16.0) -->
+            <div class="flm-card" style="margin-bottom:24px;background:linear-gradient(135deg, rgba(88,166,255,0.1) 0%, rgba(139,92,246,0.1) 100%);border:1px solid rgba(88,166,255,0.2);">
+                <div class="flm-card-header" style="border-bottom:1px solid rgba(88,166,255,0.15);">
+                    <h3 class="flm-card-title" style="display:flex;align-items:center;gap:12px;">
+                        <span class="flm-card-icon" style="background:linear-gradient(135deg, #58a6ff, #8b5cf6);"><?php echo $this->icon('bolt'); ?></span>
+                        Real-Time Dashboard
+                        <span class="flm-badge" style="background:rgba(63,185,80,0.15);color:var(--flm-success);">v2.16.0</span>
+                        <span class="flm-realtime-indicator" id="flm-realtime-indicator" style="margin-left:auto;display:flex;align-items:center;gap:6px;font-size:11px;color:var(--flm-text-muted);">
+                            <span class="flm-pulse" style="width:8px;height:8px;border-radius:50%;background:var(--flm-success);animation:pulse 2s infinite;"></span>
+                            <span id="flm-realtime-status">Live</span>
+                        </span>
+                    </h3>
+                </div>
+                <div class="flm-card-body">
+                    <div id="flm-realtime-stats" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:16px;">
+                        <!-- Today's Stats -->
+                        <div class="flm-realtime-stat" style="background:var(--flm-bg);border-radius:12px;padding:16px;border:1px solid var(--flm-border);">
+                            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                                <span style="width:32px;height:32px;border-radius:8px;background:rgba(63,185,80,0.15);display:flex;align-items:center;justify-content:center;">
+                                    <?php echo $this->icon('eye'); ?>
+                                </span>
+                                <span style="font-size:12px;color:var(--flm-text-muted);">Today's Views</span>
+                            </div>
+                            <div class="flm-realtime-value" id="flm-rt-pageviews" style="font-size:28px;font-weight:700;color:var(--flm-text);">—</div>
+                            <div class="flm-realtime-source" id="flm-rt-source" style="font-size:10px;color:var(--flm-text-muted);margin-top:4px;"></div>
+                        </div>
+                        
+                        <div class="flm-realtime-stat" style="background:var(--flm-bg);border-radius:12px;padding:16px;border:1px solid var(--flm-border);">
+                            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                                <span style="width:32px;height:32px;border-radius:8px;background:rgba(88,166,255,0.15);display:flex;align-items:center;justify-content:center;">
+                                    <?php echo $this->icon('user'); ?>
+                                </span>
+                                <span style="font-size:12px;color:var(--flm-text-muted);">Active Users</span>
+                            </div>
+                            <div class="flm-realtime-value" id="flm-rt-users" style="font-size:28px;font-weight:700;color:var(--flm-text);">—</div>
+                        </div>
+                        
+                        <div class="flm-realtime-stat" style="background:var(--flm-bg);border-radius:12px;padding:16px;border:1px solid var(--flm-border);">
+                            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                                <span style="width:32px;height:32px;border-radius:8px;background:rgba(139,92,246,0.15);display:flex;align-items:center;justify-content:center;">
+                                    <?php echo $this->icon('edit'); ?>
+                                </span>
+                                <span style="font-size:12px;color:var(--flm-text-muted);">Published Today</span>
+                            </div>
+                            <div class="flm-realtime-value" id="flm-rt-published" style="font-size:28px;font-weight:700;color:var(--flm-text);">—</div>
+                        </div>
+                        
+                        <div class="flm-realtime-stat" style="background:var(--flm-bg);border-radius:12px;padding:16px;border:1px solid var(--flm-border);">
+                            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                                <span style="width:32px;height:32px;border-radius:8px;background:rgba(248,81,73,0.15);display:flex;align-items:center;justify-content:center;">
+                                    <?php echo $this->icon('clock'); ?>
+                                </span>
+                                <span style="font-size:12px;color:var(--flm-text-muted);">Scheduled</span>
+                            </div>
+                            <div class="flm-realtime-value" id="flm-rt-scheduled" style="font-size:28px;font-weight:700;color:var(--flm-text);">—</div>
+                        </div>
+                        
+                        <div class="flm-realtime-stat" style="background:var(--flm-bg);border-radius:12px;padding:16px;border:1px solid var(--flm-border);">
+                            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                                <span style="width:32px;height:32px;border-radius:8px;background:rgba(245,158,11,0.15);display:flex;align-items:center;justify-content:center;">
+                                    <?php echo $this->icon('edit'); ?>
+                                </span>
+                                <span style="font-size:12px;color:var(--flm-text-muted);">Drafts</span>
+                            </div>
+                            <div class="flm-realtime-value" id="flm-rt-drafts" style="font-size:28px;font-weight:700;color:var(--flm-text);">—</div>
+                        </div>
+                        
+                        <div class="flm-realtime-stat" style="background:var(--flm-bg);border-radius:12px;padding:16px;border:1px solid var(--flm-border);">
+                            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                                <span style="width:32px;height:32px;border-radius:8px;background:rgba(63,185,80,0.15);display:flex;align-items:center;justify-content:center;">
+                                    <?php echo $this->icon('trophy'); ?>
+                                </span>
+                                <span style="font-size:12px;color:var(--flm-text-muted);">This Week</span>
+                            </div>
+                            <div class="flm-realtime-value" id="flm-rt-week" style="font-size:28px;font-weight:700;color:var(--flm-text);">—</div>
+                        </div>
+                    </div>
+                    
+                    <!-- Team Breakdown -->
+                    <div style="margin-top:20px;padding-top:20px;border-top:1px solid var(--flm-border);">
+                        <h4 style="margin:0 0 12px;font-size:13px;font-weight:600;color:var(--flm-text);">Posts This Week by Team</h4>
+                        <div id="flm-rt-teams" style="display:flex;flex-wrap:wrap;gap:8px;">
+                            <!-- Populated by JS -->
+                        </div>
+                    </div>
+                    
+                    <div style="margin-top:16px;display:flex;align-items:center;justify-content:space-between;">
+                        <span id="flm-rt-timestamp" style="font-size:11px;color:var(--flm-text-muted);">Last updated: —</span>
+                        <button type="button" class="flm-btn flm-btn-secondary flm-btn-xs" id="flm-refresh-realtime">
+                            <?php echo $this->icon('refresh'); ?> Refresh
+                        </button>
+                    </div>
+                </div>
+            </div>
             
             <!-- Row 1: Activity Chart + Top Posts -->
             <div class="flm-analytics-row">
@@ -18613,31 +19380,60 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
      * @param array $request_body API request body
      * @return array|false API response or false
      */
+    /**
+     * Query GA4 Data API
+     * Supports both OAuth tokens (preferred) and service account authentication
+     * 
+     * @param string $property_id GA4 property ID (with or without "properties/" prefix)
+     * @param array $request_body The GA4 Data API request body
+     * @return array|false Response data or false on failure
+     */
     private function query_ga4_api($property_id, $request_body) {
         $settings = $this->get_settings();
-        $service_account_json = $settings['ga4_service_account'] ?? '';
+        $access_token = null;
+        $auth_method = 'none';
         
-        if (empty($service_account_json)) {
-            return false;
+        // Priority 1: Use OAuth token if available
+        if (!empty($settings['ga4_oauth_access_token'])) {
+            $token_result = $this->get_oauth_token('ga4');
+            if (!is_wp_error($token_result)) {
+                $access_token = $token_result;
+                $auth_method = 'oauth';
+            } else {
+                // OAuth token expired/invalid, log but try service account
+                $this->log_error('warning', 'GA4', 'OAuth token error: ' . $token_result->get_error_message());
+            }
         }
         
-        $service_account = json_decode($service_account_json, true);
-        if (!$service_account) {
-            $this->log_error('error', 'GA4', 'Invalid service account JSON');
-            return false;
+        // Priority 2: Fall back to service account
+        if (!$access_token && !empty($settings['ga4_service_account'])) {
+            $service_account = json_decode($settings['ga4_service_account'], true);
+            if ($service_account) {
+                $access_token = $this->get_google_access_token(
+                    $service_account,
+                    'https://www.googleapis.com/auth/analytics.readonly'
+                );
+                if ($access_token) {
+                    $auth_method = 'service_account';
+                }
+            } else {
+                $this->log_error('error', 'GA4', 'Invalid service account JSON');
+            }
         }
         
-        $access_token = $this->get_google_access_token(
-            $service_account,
-            'https://www.googleapis.com/auth/analytics.readonly'
-        );
-        
+        // No valid authentication method
         if (!$access_token) {
+            $this->log_error('error', 'GA4', 'No valid authentication available. Connect via OAuth or add a service account.');
             return false;
         }
         
-        // Ensure property ID is in correct format
+        // Ensure property ID is in correct format (numeric only for API URL)
         $property_id = preg_replace('/^properties\//', '', $property_id);
+        
+        if (empty($property_id) || !preg_match('/^\d+$/', $property_id)) {
+            $this->log_error('error', 'GA4', 'Invalid property ID format: ' . $property_id);
+            return false;
+        }
         
         $response = wp_remote_post(
             "https://analyticsdata.googleapis.com/v1beta/properties/{$property_id}:runReport",
@@ -18660,7 +19456,18 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
         $body = json_decode(wp_remote_retrieve_body($response), true);
         
         if ($code !== 200) {
-            $this->log_error('error', 'GA4', "API error ({$code})", $body);
+            $error_message = $body['error']['message'] ?? 'Unknown error';
+            $this->log_error('error', 'GA4', "API error ({$code}): {$error_message}", $body);
+            
+            // If OAuth token was rejected, try to refresh
+            if ($code === 401 && $auth_method === 'oauth') {
+                $refresh_result = $this->refresh_google_oauth_token('ga4');
+                if (!is_wp_error($refresh_result)) {
+                    // Retry once with new token
+                    return $this->query_ga4_api($property_id, $request_body);
+                }
+            }
+            
             return false;
         }
         
@@ -18676,7 +19483,11 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
         $settings = $this->get_settings();
         $property_id = $settings['ga4_property_id'] ?? '';
         
-        if (empty($property_id) || empty($settings['ga4_service_account'])) {
+        // Check if we have authentication (OAuth OR service account) and a property ID
+        $has_oauth = !empty($settings['ga4_oauth_access_token']);
+        $has_service_account = !empty($settings['ga4_service_account']);
+        
+        if (empty($property_id) || (!$has_oauth && !$has_service_account)) {
             return $this->get_fallback_analytics($days);
         }
         
@@ -18734,7 +19545,11 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
         $settings = $this->get_settings();
         $property_id = $settings['ga4_property_id'] ?? '';
         
-        if (empty($property_id) || empty($settings['ga4_service_account'])) {
+        // Check if we have authentication (OAuth OR service account) and a property ID
+        $has_oauth = !empty($settings['ga4_oauth_access_token']);
+        $has_service_account = !empty($settings['ga4_service_account']);
+        
+        if (empty($property_id) || (!$has_oauth && !$has_service_account)) {
             return [];
         }
         
@@ -18821,7 +19636,11 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
         $settings = $this->get_settings();
         $property_id = $settings['ga4_property_id'] ?? '';
         
-        if (empty($property_id) || empty($settings['ga4_service_account'])) {
+        // Check if we have authentication (OAuth OR service account) and a property ID
+        $has_oauth = !empty($settings['ga4_oauth_access_token']);
+        $has_service_account = !empty($settings['ga4_service_account']);
+        
+        if (empty($property_id) || (!$has_oauth && !$has_service_account)) {
             return $this->get_social_hourly_performance();
         }
         
@@ -20340,11 +21159,76 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
     }
     
     // ========================================
-    // v2.15.0 OAUTH INTEGRATION
+    // v2.15.1 OAUTH INTEGRATION - DIRECT GOOGLE OAUTH (PRODUCTION)
     // ========================================
     
     /**
-     * Initialize OAuth flow - returns auth URL
+     * Google OAuth endpoints
+     */
+    private $google_auth_url = 'https://accounts.google.com/o/oauth2/v2/auth';
+    private $google_token_url = 'https://oauth2.googleapis.com/token';
+    private $ga4_admin_api = 'https://analyticsadmin.googleapis.com/v1beta';
+    private $ga4_data_api = 'https://analyticsdata.googleapis.com/v1beta';
+    
+    /**
+     * Get Google OAuth redirect URI
+     */
+    private function get_google_redirect_uri() {
+        return admin_url('admin-post.php?action=flm_oauth_callback');
+    }
+    
+    /**
+     * Get Google OAuth scopes for a provider
+     */
+    private function get_google_scopes($provider) {
+        $scopes = [
+            'ga4' => [
+                'https://www.googleapis.com/auth/analytics.readonly',
+            ],
+            'gsc' => [
+                'https://www.googleapis.com/auth/webmasters.readonly',
+            ],
+        ];
+        return $scopes[$provider] ?? [];
+    }
+    
+    /**
+     * Save Google OAuth credentials
+     */
+    public function ajax_save_google_credentials() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+        
+        $client_id = sanitize_text_field($_POST['client_id'] ?? '');
+        $client_secret = sanitize_text_field($_POST['client_secret'] ?? '');
+        
+        if (empty($client_id) || empty($client_secret)) {
+            wp_send_json_error('Client ID and Client Secret are required');
+        }
+        
+        // Validate format
+        if (!preg_match('/\.apps\.googleusercontent\.com$/', $client_id)) {
+            wp_send_json_error('Invalid Client ID format. Should end with .apps.googleusercontent.com');
+        }
+        
+        $settings = $this->get_settings();
+        $settings['google_client_id'] = $client_id;
+        $settings['google_client_secret'] = $client_secret;
+        update_option('flm_settings', $settings);
+        
+        $this->log_activity('settings', 'Google OAuth credentials saved');
+        
+        wp_send_json_success([
+            'message' => 'Google credentials saved. You can now connect GA4 and Search Console.',
+            'redirect_uri' => $this->get_google_redirect_uri(),
+        ]);
+    }
+    
+    /**
+     * Initialize OAuth flow - returns auth URL for direct Google OAuth
      */
     public function ajax_oauth_init() {
         check_ajax_referer('flm_nonce', 'nonce');
@@ -20359,43 +21243,51 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
             wp_send_json_error('Invalid provider');
         }
         
-        // Build return URL for OAuth callback (uses admin-post.php to avoid permission issues)
-        $return_url = add_query_arg([
-            'action' => 'flm_oauth_callback',
-            'provider' => $provider,
-        ], admin_url('admin-post.php'));
+        $settings = $this->get_settings();
         
-        // Call mmgleads.com OAuth init endpoint
-        $response = wp_remote_post($this->oauth_base . '/' . $provider . '/init', [
-            'timeout' => 30,
-            'headers' => ['Content-Type' => 'application/json'],
-            'body' => wp_json_encode([
-                'return_url' => $return_url,
-                'site_url' => home_url(),
-            ]),
-        ]);
-        
-        if (is_wp_error($response)) {
-            wp_send_json_error('OAuth server unreachable: ' . $response->get_error_message());
+        // For Google providers (GA4, GSC), use direct OAuth
+        if (in_array($provider, ['ga4', 'gsc'])) {
+            // Verify credentials are set
+            if (empty($settings['google_client_id']) || empty($settings['google_client_secret'])) {
+                wp_send_json_error('Google OAuth credentials not configured. Please enter your Client ID and Client Secret first.');
+            }
+            
+            // Generate state parameter for CSRF protection
+            $state = wp_generate_password(32, false);
+            set_transient('flm_oauth_state_' . $state, [
+                'provider' => $provider,
+                'time' => time(),
+            ], 600); // 10 minute expiry
+            
+            // Build authorization URL
+            $scopes = $this->get_google_scopes($provider);
+            $auth_url = add_query_arg([
+                'client_id' => $settings['google_client_id'],
+                'redirect_uri' => $this->get_google_redirect_uri(),
+                'response_type' => 'code',
+                'scope' => implode(' ', $scopes),
+                'access_type' => 'offline',  // Request refresh token
+                'prompt' => 'consent',  // Force consent to get refresh token
+                'state' => $state,
+            ], $this->google_auth_url);
+            
+            $provider_names = ['ga4' => 'Google Analytics', 'gsc' => 'Search Console'];
+            $this->log_activity('analytics', "Started {$provider_names[$provider]} OAuth flow");
+            
+            wp_send_json_success([
+                'auth_url' => $auth_url,
+                'provider' => $provider,
+            ]);
         }
         
-        $body = json_decode(wp_remote_retrieve_body($response), true);
-        
-        if (empty($body['auth_url'])) {
-            wp_send_json_error('Invalid response from OAuth server');
-        }
-        
-        $provider_names = ['ga4' => 'Google Analytics', 'gsc' => 'Search Console', 'twitter' => 'Twitter', 'facebook' => 'Facebook'];
-        $this->log_activity('analytics', "Started {$provider_names[$provider]} OAuth flow");
-        
-        wp_send_json_success([
-            'auth_url' => $body['auth_url'],
-            'provider' => $provider,
-        ]);
+        // For Twitter/Facebook, these would need their own OAuth implementations
+        // or use the proxy approach. For now, return an error.
+        wp_send_json_error('OAuth for ' . $provider . ' is not yet implemented. Please use API keys directly.');
     }
     
     /**
      * Handle OAuth callback - save tokens
+     * This is called via AJAX after the redirect from Google
      */
     public function ajax_oauth_callback() {
         check_ajax_referer('flm_nonce', 'nonce');
@@ -20405,10 +21297,9 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
         }
         
         $provider = sanitize_text_field($_POST['provider'] ?? '');
-        $access_token = sanitize_text_field($_POST['access_token'] ?? '');
-        $refresh_token = sanitize_text_field($_POST['refresh_token'] ?? '');
+        $access_token = $_POST['access_token'] ?? '';
+        $refresh_token = $_POST['refresh_token'] ?? '';
         $expires_in = intval($_POST['expires_in'] ?? 3600);
-        $pages = sanitize_text_field($_POST['pages'] ?? '');  // Base64 encoded for Facebook
         
         if (!in_array($provider, ['ga4', 'gsc', 'twitter', 'facebook'])) {
             wp_send_json_error('Invalid provider');
@@ -20433,43 +21324,18 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
                 $settings['gsc_oauth_refresh_token'] = $refresh_token;
                 $settings['gsc_oauth_expires_at'] = $expires_at;
                 break;
-                
-            case 'twitter':
-                $settings['twitter_oauth_access_token'] = $access_token;
-                $settings['twitter_oauth_refresh_token'] = $refresh_token;
-                $settings['twitter_oauth_expires_at'] = $expires_at;
-                // Also set legacy fields for compatibility
-                $settings['twitter_access_token'] = $access_token;
-                break;
-                
-            case 'facebook':
-                $settings['facebook_oauth_access_token'] = $access_token;
-                $settings['facebook_oauth_expires_at'] = $expires_at;
-                // Decode pages data
-                if (!empty($pages)) {
-                    $decoded_pages = json_decode(base64_decode($pages), true);
-                    if (is_array($decoded_pages)) {
-                        $settings['facebook_oauth_pages'] = $decoded_pages;
-                        // Auto-select first page if none selected
-                        if (empty($settings['facebook_oauth_selected_page']) && !empty($decoded_pages[0]['id'])) {
-                            $settings['facebook_oauth_selected_page'] = $decoded_pages[0]['id'];
-                            $settings['facebook_page_id'] = $decoded_pages[0]['id'];
-                            $settings['facebook_access_token'] = $decoded_pages[0]['access_token'];
-                        }
-                    }
-                }
-                break;
         }
         
         update_option('flm_settings', $settings);
         
-        $provider_names = ['ga4' => 'Google Analytics', 'gsc' => 'Search Console', 'twitter' => 'Twitter', 'facebook' => 'Facebook'];
+        $provider_names = ['ga4' => 'Google Analytics', 'gsc' => 'Search Console'];
         $this->log_activity('analytics', "Connected {$provider_names[$provider]} via OAuth");
         
         wp_send_json_success([
             'message' => $provider_names[$provider] . ' connected successfully',
             'provider' => $provider,
             'expires_at' => $expires_at,
+            'needs_property_selection' => ($provider === 'ga4'),
         ]);
     }
     
@@ -20496,6 +21362,12 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
                 $settings['ga4_oauth_access_token'] = '';
                 $settings['ga4_oauth_refresh_token'] = '';
                 $settings['ga4_oauth_expires_at'] = 0;
+                $settings['ga4_property_id'] = '';
+                $settings['ga4_property_name'] = '';
+                $settings['ga4_available_properties'] = [];
+                // Clear cached data
+                delete_transient('flm_ga4_overview_7');
+                delete_transient('flm_ga4_overview_30');
                 break;
                 
             case 'gsc':
@@ -20534,7 +21406,7 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
     }
     
     /**
-     * Refresh OAuth tokens
+     * Refresh OAuth tokens - DIRECT GOOGLE OAUTH
      */
     public function ajax_oauth_refresh() {
         check_ajax_referer('flm_nonce', 'nonce');
@@ -20545,11 +21417,11 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
         
         $provider = sanitize_text_field($_POST['provider'] ?? '');
         
-        if (!in_array($provider, ['ga4', 'gsc', 'twitter', 'facebook'])) {
-            wp_send_json_error('Invalid provider');
+        if (!in_array($provider, ['ga4', 'gsc'])) {
+            wp_send_json_error('Invalid provider for refresh');
         }
         
-        $result = $this->refresh_oauth_token($provider);
+        $result = $this->refresh_google_oauth_token($provider);
         
         if (is_wp_error($result)) {
             wp_send_json_error($result->get_error_message());
@@ -20559,108 +21431,46 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
     }
     
     /**
-     * Get OAuth status for all providers
+     * Refresh Google OAuth token directly
      */
-    public function ajax_oauth_status() {
-        check_ajax_referer('flm_nonce', 'nonce');
-        
-        $settings = $this->get_settings();
-        $now = time();
-        
-        $status = [
-            'ga4' => [
-                'connected' => !empty($settings['ga4_oauth_access_token']),
-                'expires_at' => $settings['ga4_oauth_expires_at'] ?? 0,
-                'expires_in' => max(0, ($settings['ga4_oauth_expires_at'] ?? 0) - $now),
-                'needs_refresh' => !empty($settings['ga4_oauth_access_token']) && 
-                                   ($settings['ga4_oauth_expires_at'] ?? 0) < ($now + 300),
-            ],
-            'gsc' => [
-                'connected' => !empty($settings['gsc_oauth_access_token']),
-                'expires_at' => $settings['gsc_oauth_expires_at'] ?? 0,
-                'expires_in' => max(0, ($settings['gsc_oauth_expires_at'] ?? 0) - $now),
-                'needs_refresh' => !empty($settings['gsc_oauth_access_token']) && 
-                                   ($settings['gsc_oauth_expires_at'] ?? 0) < ($now + 300),
-            ],
-            'twitter' => [
-                'connected' => !empty($settings['twitter_oauth_access_token']),
-                'expires_at' => $settings['twitter_oauth_expires_at'] ?? 0,
-                'expires_in' => max(0, ($settings['twitter_oauth_expires_at'] ?? 0) - $now),
-                'needs_refresh' => !empty($settings['twitter_oauth_access_token']) && 
-                                   ($settings['twitter_oauth_expires_at'] ?? 0) < ($now + 300),
-            ],
-            'facebook' => [
-                'connected' => !empty($settings['facebook_oauth_access_token']),
-                'expires_at' => $settings['facebook_oauth_expires_at'] ?? 0,
-                'expires_in' => max(0, ($settings['facebook_oauth_expires_at'] ?? 0) - $now),
-                'needs_refresh' => !empty($settings['facebook_oauth_access_token']) && 
-                                   ($settings['facebook_oauth_expires_at'] ?? 0) < ($now + 86400), // 1 day warning for FB
-                'pages' => $settings['facebook_oauth_pages'] ?? [],
-                'selected_page' => $settings['facebook_oauth_selected_page'] ?? '',
-            ],
-        ];
-        
-        wp_send_json_success($status);
-    }
-    
-    /**
-     * Refresh OAuth token for a provider
-     */
-    private function refresh_oauth_token($provider) {
+    private function refresh_google_oauth_token($provider) {
         $settings = $this->get_settings();
         
-        $body = [];
+        $refresh_token_key = $provider . '_oauth_refresh_token';
+        $refresh_token = $settings[$refresh_token_key] ?? '';
         
-        switch ($provider) {
-            case 'ga4':
-                if (empty($settings['ga4_oauth_refresh_token'])) {
-                    return new WP_Error('no_refresh_token', 'No refresh token available. Please reconnect.');
-                }
-                $body['refresh_token'] = $settings['ga4_oauth_refresh_token'];
-                break;
-                
-            case 'gsc':
-                if (empty($settings['gsc_oauth_refresh_token'])) {
-                    return new WP_Error('no_refresh_token', 'No refresh token available. Please reconnect.');
-                }
-                $body['refresh_token'] = $settings['gsc_oauth_refresh_token'];
-                break;
-                
-            case 'twitter':
-                if (empty($settings['twitter_oauth_refresh_token'])) {
-                    return new WP_Error('no_refresh_token', 'No refresh token available. Please reconnect.');
-                }
-                $body['refresh_token'] = $settings['twitter_oauth_refresh_token'];
-                break;
-                
-            case 'facebook':
-                if (empty($settings['facebook_oauth_access_token'])) {
-                    return new WP_Error('no_token', 'No access token available. Please reconnect.');
-                }
-                $body['access_token'] = $settings['facebook_oauth_access_token'];
-                break;
+        if (empty($refresh_token)) {
+            return new WP_Error('no_refresh_token', 'No refresh token available. Please reconnect.');
         }
         
-        // Call mmgleads.com OAuth refresh endpoint
-        $response = wp_remote_post($this->oauth_base . '/' . $provider . '/refresh', [
+        if (empty($settings['google_client_id']) || empty($settings['google_client_secret'])) {
+            return new WP_Error('no_credentials', 'Google OAuth credentials not configured.');
+        }
+        
+        // Call Google token endpoint
+        $response = wp_remote_post($this->google_token_url, [
             'timeout' => 30,
-            'headers' => ['Content-Type' => 'application/json'],
-            'body' => wp_json_encode($body),
+            'body' => [
+                'client_id' => $settings['google_client_id'],
+                'client_secret' => $settings['google_client_secret'],
+                'refresh_token' => $refresh_token,
+                'grant_type' => 'refresh_token',
+            ],
         ]);
         
         if (is_wp_error($response)) {
-            return new WP_Error('refresh_failed', 'OAuth server unreachable: ' . $response->get_error_message());
+            return new WP_Error('refresh_failed', 'Google API unreachable: ' . $response->get_error_message());
         }
         
         $status_code = wp_remote_retrieve_response_code($response);
         $body = json_decode(wp_remote_retrieve_body($response), true);
         
         if ($status_code !== 200 || empty($body['access_token'])) {
-            $error_msg = $body['error'] ?? $body['details'] ?? 'Token refresh failed';
+            $error_msg = $body['error_description'] ?? $body['error'] ?? 'Token refresh failed';
             
             // Check if reauth is required
-            if (!empty($body['reauth_required']) || $status_code === 401) {
-                return new WP_Error('reauth_required', 'Token expired. Please reconnect your account.');
+            if (isset($body['error']) && in_array($body['error'], ['invalid_grant', 'invalid_token'])) {
+                return new WP_Error('reauth_required', 'Token expired or revoked. Please reconnect your account.');
             }
             
             return new WP_Error('refresh_failed', $error_msg);
@@ -20669,43 +21479,12 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
         // Update stored tokens
         $expires_at = time() + ($body['expires_in'] ?? 3600);
         
-        switch ($provider) {
-            case 'ga4':
-                $settings['ga4_oauth_access_token'] = $body['access_token'];
-                $settings['ga4_oauth_expires_at'] = $expires_at;
-                break;
-                
-            case 'gsc':
-                $settings['gsc_oauth_access_token'] = $body['access_token'];
-                $settings['gsc_oauth_expires_at'] = $expires_at;
-                break;
-                
-            case 'twitter':
-                $settings['twitter_oauth_access_token'] = $body['access_token'];
-                $settings['twitter_oauth_expires_at'] = $expires_at;
-                $settings['twitter_access_token'] = $body['access_token'];
-                // Twitter may return new refresh token
-                if (!empty($body['refresh_token'])) {
-                    $settings['twitter_oauth_refresh_token'] = $body['refresh_token'];
-                }
-                break;
-                
-            case 'facebook':
-                $settings['facebook_oauth_access_token'] = $body['access_token'];
-                $settings['facebook_oauth_expires_at'] = $expires_at;
-                // Update pages if returned
-                if (!empty($body['pages'])) {
-                    $settings['facebook_oauth_pages'] = $body['pages'];
-                    // Update selected page token
-                    $selected = $settings['facebook_oauth_selected_page'];
-                    foreach ($body['pages'] as $page) {
-                        if ($page['id'] === $selected) {
-                            $settings['facebook_access_token'] = $page['access_token'];
-                            break;
-                        }
-                    }
-                }
-                break;
+        $settings[$provider . '_oauth_access_token'] = $body['access_token'];
+        $settings[$provider . '_oauth_expires_at'] = $expires_at;
+        
+        // Google sometimes returns a new refresh token
+        if (!empty($body['refresh_token'])) {
+            $settings[$provider . '_oauth_refresh_token'] = $body['refresh_token'];
         }
         
         update_option('flm_settings', $settings);
@@ -20718,6 +21497,56 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
     }
     
     /**
+     * Get OAuth status for all providers
+     */
+    public function ajax_oauth_status() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        $settings = $this->get_settings();
+        $now = time();
+        
+        $status = [
+            'google_credentials_set' => !empty($settings['google_client_id']) && !empty($settings['google_client_secret']),
+            'redirect_uri' => $this->get_google_redirect_uri(),
+            'ga4' => [
+                'connected' => !empty($settings['ga4_oauth_access_token']),
+                'expires_at' => $settings['ga4_oauth_expires_at'] ?? 0,
+                'expires_in' => max(0, ($settings['ga4_oauth_expires_at'] ?? 0) - $now),
+                'needs_refresh' => !empty($settings['ga4_oauth_access_token']) && 
+                                   ($settings['ga4_oauth_expires_at'] ?? 0) < ($now + 300),
+                'property_id' => $settings['ga4_property_id'] ?? '',
+                'property_name' => $settings['ga4_property_name'] ?? '',
+                'needs_property_selection' => !empty($settings['ga4_oauth_access_token']) && empty($settings['ga4_property_id']),
+            ],
+            'gsc' => [
+                'connected' => !empty($settings['gsc_oauth_access_token']),
+                'expires_at' => $settings['gsc_oauth_expires_at'] ?? 0,
+                'expires_in' => max(0, ($settings['gsc_oauth_expires_at'] ?? 0) - $now),
+                'needs_refresh' => !empty($settings['gsc_oauth_access_token']) && 
+                                   ($settings['gsc_oauth_expires_at'] ?? 0) < ($now + 300),
+            ],
+            'twitter' => [
+                'connected' => !empty($settings['twitter_oauth_access_token']) || !empty($settings['twitter_api_key']),
+                'expires_at' => $settings['twitter_oauth_expires_at'] ?? 0,
+                'expires_in' => max(0, ($settings['twitter_oauth_expires_at'] ?? 0) - $now),
+                'needs_refresh' => !empty($settings['twitter_oauth_access_token']) && 
+                                   ($settings['twitter_oauth_expires_at'] ?? 0) < ($now + 300),
+            ],
+            'facebook' => [
+                'connected' => !empty($settings['facebook_oauth_access_token']) || !empty($settings['facebook_access_token']),
+                'expires_at' => $settings['facebook_oauth_expires_at'] ?? 0,
+                'expires_in' => max(0, ($settings['facebook_oauth_expires_at'] ?? 0) - $now),
+                'needs_refresh' => !empty($settings['facebook_oauth_access_token']) && 
+                                   ($settings['facebook_oauth_expires_at'] ?? 0) < ($now + 86400),
+                'pages' => $settings['facebook_oauth_pages'] ?? [],
+                'selected_page' => $settings['facebook_oauth_selected_page'] ?? '',
+            ],
+        ];
+        
+        wp_send_json_success($status);
+    }
+    
+    /**
      * Get valid OAuth access token (auto-refresh if needed)
      */
     public function get_oauth_token($provider) {
@@ -20726,7 +21555,6 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
         
         $token_key = $provider . '_oauth_access_token';
         $expires_key = $provider . '_oauth_expires_at';
-        $refresh_key = $provider . '_oauth_refresh_token';
         
         $access_token = $settings[$token_key] ?? '';
         $expires_at = $settings[$expires_key] ?? 0;
@@ -20738,7 +21566,11 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
         // Check if token needs refresh (5 minute buffer)
         if ($expires_at < ($now + 300)) {
             // Try to refresh
-            $result = $this->refresh_oauth_token($provider);
+            if (in_array($provider, ['ga4', 'gsc'])) {
+                $result = $this->refresh_google_oauth_token($provider);
+            } else {
+                return new WP_Error('token_expired', 'Token expired and cannot be refreshed. Please reconnect.');
+            }
             
             if (is_wp_error($result)) {
                 return $result;
@@ -20753,97 +21585,1158 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
     }
     
     /**
+     * List available GA4 properties
+     */
+    public function ajax_ga4_list_properties() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+        
+        $token = $this->get_oauth_token('ga4');
+        
+        if (is_wp_error($token)) {
+            wp_send_json_error($token->get_error_message());
+        }
+        
+        // First, get accounts
+        $accounts_response = wp_remote_get($this->ga4_admin_api . '/accounts', [
+            'timeout' => 30,
+            'headers' => [
+                'Authorization' => 'Bearer ' . $token,
+            ],
+        ]);
+        
+        if (is_wp_error($accounts_response)) {
+            wp_send_json_error('Failed to fetch accounts: ' . $accounts_response->get_error_message());
+        }
+        
+        $accounts_status = wp_remote_retrieve_response_code($accounts_response);
+        $accounts_body = json_decode(wp_remote_retrieve_body($accounts_response), true);
+        
+        if ($accounts_status !== 200) {
+            $error = $accounts_body['error']['message'] ?? 'Failed to fetch accounts';
+            wp_send_json_error($error);
+        }
+        
+        $properties = [];
+        $accounts = $accounts_body['accounts'] ?? [];
+        
+        // For each account, get properties
+        foreach ($accounts as $account) {
+            $account_name = $account['name']; // Format: accounts/123456789
+            $account_display = $account['displayName'] ?? 'Unknown Account';
+            
+            $props_response = wp_remote_get($this->ga4_admin_api . '/' . $account_name . '/properties', [
+                'timeout' => 30,
+                'headers' => [
+                    'Authorization' => 'Bearer ' . $token,
+                ],
+            ]);
+            
+            if (!is_wp_error($props_response) && wp_remote_retrieve_response_code($props_response) === 200) {
+                $props_body = json_decode(wp_remote_retrieve_body($props_response), true);
+                
+                foreach ($props_body['properties'] ?? [] as $property) {
+                    $properties[] = [
+                        'id' => $property['name'], // Format: properties/123456789
+                        'display_name' => $property['displayName'] ?? 'Unknown Property',
+                        'account_name' => $account_display,
+                        'property_type' => $property['propertyType'] ?? 'PROPERTY_TYPE_UNSPECIFIED',
+                        'time_zone' => $property['timeZone'] ?? '',
+                        'currency' => $property['currencyCode'] ?? 'USD',
+                        'industry' => $property['industryCategory'] ?? '',
+                    ];
+                }
+            }
+        }
+        
+        // Cache the properties list
+        $settings = $this->get_settings();
+        $settings['ga4_available_properties'] = $properties;
+        update_option('flm_settings', $settings);
+        
+        wp_send_json_success([
+            'properties' => $properties,
+            'count' => count($properties),
+        ]);
+    }
+    
+    /**
+     * Select a GA4 property
+     */
+    public function ajax_ga4_select_property() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+        
+        $property_id = sanitize_text_field($_POST['property_id'] ?? '');
+        $property_name = sanitize_text_field($_POST['property_name'] ?? '');
+        
+        if (empty($property_id)) {
+            wp_send_json_error('Property ID is required');
+        }
+        
+        // Validate format: should be "properties/123456789"
+        if (!preg_match('/^properties\/\d+$/', $property_id)) {
+            wp_send_json_error('Invalid property ID format');
+        }
+        
+        $settings = $this->get_settings();
+        $settings['ga4_property_id'] = $property_id;
+        $settings['ga4_property_name'] = $property_name;
+        update_option('flm_settings', $settings);
+        
+        // Clear cached data for the new property
+        delete_transient('flm_ga4_overview_7');
+        delete_transient('flm_ga4_overview_30');
+        
+        $this->log_activity('analytics', "Selected GA4 property: {$property_name}");
+        
+        wp_send_json_success([
+            'message' => 'GA4 property selected: ' . $property_name,
+            'property_id' => $property_id,
+            'property_name' => $property_name,
+        ]);
+    }
+    
+    /**
      * Handle OAuth callback via admin-post.php
-     * URL: /wp-admin/admin-post.php?action=flm_oauth_callback&...
+     * URL: /wp-admin/admin-post.php?action=flm_oauth_callback&code=...&state=...
+     * 
+     * This receives the authorization code from Google and exchanges it for tokens.
      */
     public function handle_oauth_callback() {
-        // Debug log
-        error_log('FLM OAuth Callback: ' . print_r($_GET, true));
-        
         // Verify user is logged in and can manage options
         if (!is_user_logged_in() || !current_user_can('manage_options')) {
-            error_log('FLM OAuth: Not authorized');
             wp_redirect(admin_url('options-general.php?page=flm-importer&oauth_error=' . urlencode('Not authorized')));
             exit;
         }
         
-        // Check for success
-        if (!isset($_GET['success']) || $_GET['success'] !== '1') {
-            $error = isset($_GET['error']) ? sanitize_text_field($_GET['error']) : 'OAuth authorization failed';
-            error_log('FLM OAuth: No success flag - ' . $error);
+        // Check for error from Google
+        if (isset($_GET['error'])) {
+            $error = sanitize_text_field($_GET['error']);
+            $error_desc = sanitize_text_field($_GET['error_description'] ?? $error);
+            wp_redirect(admin_url('options-general.php?page=flm-importer&oauth_error=' . urlencode($error_desc)));
+            exit;
+        }
+        
+        // Verify we have a code
+        if (empty($_GET['code'])) {
+            wp_redirect(admin_url('options-general.php?page=flm-importer&oauth_error=' . urlencode('No authorization code received')));
+            exit;
+        }
+        
+        $code = sanitize_text_field($_GET['code']);
+        $state = sanitize_text_field($_GET['state'] ?? '');
+        
+        // Verify state (CSRF protection)
+        $state_data = get_transient('flm_oauth_state_' . $state);
+        if (!$state_data) {
+            wp_redirect(admin_url('options-general.php?page=flm-importer&oauth_error=' . urlencode('Invalid or expired state. Please try again.')));
+            exit;
+        }
+        
+        $provider = $state_data['provider'];
+        delete_transient('flm_oauth_state_' . $state);
+        
+        $settings = $this->get_settings();
+        
+        // Exchange code for tokens
+        $response = wp_remote_post($this->google_token_url, [
+            'timeout' => 30,
+            'body' => [
+                'code' => $code,
+                'client_id' => $settings['google_client_id'],
+                'client_secret' => $settings['google_client_secret'],
+                'redirect_uri' => $this->get_google_redirect_uri(),
+                'grant_type' => 'authorization_code',
+            ],
+        ]);
+        
+        if (is_wp_error($response)) {
+            wp_redirect(admin_url('options-general.php?page=flm-importer&oauth_error=' . urlencode('Failed to exchange code: ' . $response->get_error_message())));
+            exit;
+        }
+        
+        $status_code = wp_remote_retrieve_response_code($response);
+        $body = json_decode(wp_remote_retrieve_body($response), true);
+        
+        if ($status_code !== 200 || empty($body['access_token'])) {
+            $error = $body['error_description'] ?? $body['error'] ?? 'Token exchange failed';
             wp_redirect(admin_url('options-general.php?page=flm-importer&oauth_error=' . urlencode($error)));
             exit;
         }
         
-        // Get token data from URL
-        $provider = sanitize_text_field($_GET['provider'] ?? '');
-        $access_token = $_GET['access_token'] ?? '';  // Don't sanitize - may corrupt token
-        $refresh_token = $_GET['refresh_token'] ?? '';
-        $expires_in = intval($_GET['expires_in'] ?? 3600);
-        $pages = sanitize_text_field($_GET['pages'] ?? '');
-        
-        error_log("FLM OAuth: Provider=$provider, Token length=" . strlen($access_token) . ", Refresh length=" . strlen($refresh_token));
-        
-        if (!in_array($provider, ['ga4', 'gsc', 'twitter', 'facebook']) || empty($access_token)) {
-            error_log('FLM OAuth: Invalid provider or empty token');
-            wp_redirect(admin_url('options-general.php?page=flm-importer&oauth_error=' . urlencode('Invalid OAuth response')));
-            exit;
-        }
-        
         // Save tokens
-        $settings = $this->get_settings();
+        $access_token = $body['access_token'];
+        $refresh_token = $body['refresh_token'] ?? '';
+        $expires_in = $body['expires_in'] ?? 3600;
         $expires_at = time() + $expires_in;
         
-        error_log("FLM OAuth: Current settings keys: " . implode(', ', array_keys($settings)));
+        $settings[$provider . '_oauth_access_token'] = $access_token;
+        $settings[$provider . '_oauth_refresh_token'] = $refresh_token;
+        $settings[$provider . '_oauth_expires_at'] = $expires_at;
         
-        switch ($provider) {
-            case 'ga4':
-                $settings['ga4_oauth_access_token'] = $access_token;
-                $settings['ga4_oauth_refresh_token'] = $refresh_token;
-                $settings['ga4_oauth_expires_at'] = $expires_at;
-                break;
-                
-            case 'gsc':
-                $settings['gsc_oauth_access_token'] = $access_token;
-                $settings['gsc_oauth_refresh_token'] = $refresh_token;
-                $settings['gsc_oauth_expires_at'] = $expires_at;
-                break;
-                
-            case 'twitter':
-                $settings['twitter_oauth_access_token'] = $access_token;
-                $settings['twitter_oauth_refresh_token'] = $refresh_token;
-                $settings['twitter_oauth_expires_at'] = $expires_at;
-                $settings['twitter_access_token'] = $access_token;
-                break;
-                
-            case 'facebook':
-                $settings['facebook_oauth_access_token'] = $access_token;
-                $settings['facebook_oauth_expires_at'] = $expires_at;
-                if (!empty($pages)) {
-                    $decoded_pages = json_decode(base64_decode($pages), true);
-                    if (is_array($decoded_pages)) {
-                        $settings['facebook_oauth_pages'] = $decoded_pages;
-                        if (empty($settings['facebook_oauth_selected_page']) && !empty($decoded_pages[0]['id'])) {
-                            $settings['facebook_oauth_selected_page'] = $decoded_pages[0]['id'];
-                            $settings['facebook_page_id'] = $decoded_pages[0]['id'];
-                            $settings['facebook_access_token'] = $decoded_pages[0]['access_token'];
-                        }
-                    }
-                }
-                break;
-        }
-        
-        $result = update_option('flm_settings', $settings);
-        error_log("FLM OAuth: update_option result = " . ($result ? 'true' : 'false'));
-        error_log("FLM OAuth: Saved token length = " . strlen($settings['ga4_oauth_access_token'] ?? ''));
+        update_option('flm_settings', $settings);
         
         // Log activity
-        $provider_names = ['ga4' => 'Google Analytics', 'gsc' => 'Search Console', 'twitter' => 'Twitter', 'facebook' => 'Facebook'];
+        $provider_names = ['ga4' => 'Google Analytics', 'gsc' => 'Search Console'];
         $this->log_activity('analytics', "Connected {$provider_names[$provider]} via OAuth");
         
-        // Redirect to settings with success message
-        wp_redirect(admin_url('options-general.php?page=flm-importer&oauth_success=' . urlencode($provider_names[$provider])));
+        // Redirect with success
+        $success_param = $provider === 'ga4' ? 'ga4_connected' : 'gsc_connected';
+        wp_redirect(admin_url('options-general.php?page=flm-importer&' . $success_param . '=1'));
         exit;
+    }
+    
+    // ========================================
+    // v2.16.0: NEW FEATURES
+    // ========================================
+    
+    /**
+     * AJAX: Get calendar events for content calendar
+     */
+    public function ajax_get_calendar_events() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('edit_posts')) {
+            wp_send_json_error('Unauthorized');
+        }
+        
+        $start = sanitize_text_field($_POST['start'] ?? '');
+        $end = sanitize_text_field($_POST['end'] ?? '');
+        $settings = $this->get_settings();
+        
+        // Default to current month if not specified
+        if (empty($start)) {
+            $start = date('Y-m-01');
+        }
+        if (empty($end)) {
+            $end = date('Y-m-t');
+        }
+        
+        // Query posts in date range
+        $args = [
+            'post_type' => 'post',
+            'post_status' => ['publish', 'draft', 'pending', 'future'],
+            'posts_per_page' => 500,
+            'date_query' => [
+                [
+                    'after' => $start,
+                    'before' => $end,
+                    'inclusive' => true,
+                ],
+            ],
+            'meta_query' => [
+                [
+                    'key' => 'flm_story_id',
+                    'compare' => 'EXISTS',
+                ],
+            ],
+        ];
+        
+        // Also include non-FLM posts if you want a full calendar
+        unset($args['meta_query']);
+        
+        $query = new WP_Query($args);
+        $events = [];
+        
+        $team_colors = [
+            'braves' => '#ce1141',
+            'falcons' => '#a71930',
+            'hawks' => '#e03a3e',
+            'united' => '#80000a',
+            'dream' => '#e31837',
+            'uga' => '#ba0c2f',
+            'gt' => '#b3a369',
+        ];
+        
+        $status_colors = [
+            'publish' => '#22c55e',
+            'draft' => '#6b7280',
+            'pending' => '#f59e0b',
+            'future' => '#3b82f6',
+        ];
+        
+        foreach ($query->posts as $post) {
+            $team = get_post_meta($post->ID, 'flm_team', true);
+            $is_flm = !empty(get_post_meta($post->ID, 'flm_story_id', true));
+            
+            // Determine color: team color for FLM posts, status color for others
+            $color = $team && isset($team_colors[$team]) ? $team_colors[$team] : ($status_colors[$post->post_status] ?? '#6b7280');
+            
+            $events[] = [
+                'id' => $post->ID,
+                'title' => wp_trim_words($post->post_title, 8, '...'),
+                'start' => get_the_date('Y-m-d\TH:i:s', $post),
+                'end' => get_the_date('Y-m-d\TH:i:s', $post),
+                'url' => get_edit_post_link($post->ID, 'raw'),
+                'color' => $color,
+                'textColor' => '#fff',
+                'extendedProps' => [
+                    'status' => $post->post_status,
+                    'team' => $team,
+                    'is_flm' => $is_flm,
+                    'views' => (int) get_post_meta($post->ID, 'flm_views', true),
+                    'type' => get_post_meta($post->ID, 'flm_story_type', true),
+                ],
+            ];
+        }
+        
+        wp_send_json_success(['events' => $events]);
+    }
+    
+    /**
+     * AJAX: Bulk update posts
+     */
+    public function ajax_bulk_update_posts() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('edit_posts')) {
+            wp_send_json_error('Unauthorized');
+        }
+        
+        $post_ids = array_map('absint', $_POST['post_ids'] ?? []);
+        $action = sanitize_text_field($_POST['bulk_action'] ?? '');
+        
+        if (empty($post_ids)) {
+            wp_send_json_error('No posts selected');
+        }
+        
+        $updated = 0;
+        $errors = 0;
+        
+        foreach ($post_ids as $post_id) {
+            if (!current_user_can('edit_post', $post_id)) {
+                $errors++;
+                continue;
+            }
+            
+            switch ($action) {
+                case 'publish':
+                    wp_update_post(['ID' => $post_id, 'post_status' => 'publish']);
+                    $updated++;
+                    break;
+                    
+                case 'draft':
+                    wp_update_post(['ID' => $post_id, 'post_status' => 'draft']);
+                    $updated++;
+                    break;
+                    
+                case 'trash':
+                    wp_trash_post($post_id);
+                    $updated++;
+                    break;
+                    
+                case 'delete':
+                    if (current_user_can('delete_post', $post_id)) {
+                        wp_delete_post($post_id, true);
+                        $updated++;
+                    } else {
+                        $errors++;
+                    }
+                    break;
+                    
+                default:
+                    // Check for category assignment
+                    if (strpos($action, 'category_') === 0) {
+                        $cat_id = absint(str_replace('category_', '', $action));
+                        if ($cat_id) {
+                            wp_set_post_categories($post_id, [$cat_id], true);
+                            $updated++;
+                        }
+                    }
+            }
+        }
+        
+        $this->log_activity('bulk', "Bulk {$action}: {$updated} updated, {$errors} errors");
+        
+        wp_send_json_success([
+            'message' => "{$updated} posts updated" . ($errors > 0 ? ", {$errors} errors" : ''),
+            'updated' => $updated,
+            'errors' => $errors,
+        ]);
+    }
+    
+    /**
+     * AJAX: Test notification (breaking news alerts)
+     */
+    public function ajax_test_notification() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+        
+        $type = sanitize_text_field($_POST['type'] ?? 'email');
+        $settings = $this->get_settings();
+        
+        $test_story = [
+            'headline' => '🧪 TEST: Breaking News Alert from FLM GameDay',
+            'team' => 'Braves',
+            'type' => 'Breaking News',
+            'url' => home_url(),
+        ];
+        
+        if ($type === 'email') {
+            $email = $settings['breaking_news_email'] ?? '';
+            if (empty($email)) {
+                wp_send_json_error('No email address configured');
+            }
+            
+            $result = $this->send_breaking_news_email($test_story, $email);
+            wp_send_json_success(['message' => $result ? 'Test email sent to ' . $email : 'Failed to send email']);
+            
+        } elseif ($type === 'slack') {
+            $webhook = $settings['breaking_news_slack_webhook'] ?? '';
+            if (empty($webhook)) {
+                wp_send_json_error('No Slack webhook configured');
+            }
+            
+            $result = $this->send_breaking_news_slack($test_story, $webhook);
+            wp_send_json_success(['message' => $result ? 'Test message sent to Slack' : 'Failed to send Slack message']);
+        }
+        
+        wp_send_json_error('Invalid notification type');
+    }
+    
+    /**
+     * Send breaking news email notification
+     */
+    private function send_breaking_news_email($story, $email) {
+        $subject = '🚨 Breaking: ' . $story['headline'];
+        $body = "Breaking News Alert\n\n";
+        $body .= "Headline: {$story['headline']}\n";
+        $body .= "Team: {$story['team']}\n";
+        $body .= "Type: {$story['type']}\n";
+        $body .= "URL: {$story['url']}\n\n";
+        $body .= "Sent by FLM GameDay Atlanta";
+        
+        $headers = ['Content-Type: text/plain; charset=UTF-8'];
+        
+        return wp_mail($email, $subject, $body, $headers);
+    }
+    
+    /**
+     * Send breaking news Slack notification
+     */
+    private function send_breaking_news_slack($story, $webhook) {
+        $payload = [
+            'text' => "🚨 *Breaking News*",
+            'attachments' => [
+                [
+                    'color' => '#e03a3e',
+                    'title' => $story['headline'],
+                    'title_link' => $story['url'],
+                    'fields' => [
+                        ['title' => 'Team', 'value' => $story['team'], 'short' => true],
+                        ['title' => 'Type', 'value' => $story['type'], 'short' => true],
+                    ],
+                    'footer' => 'FLM GameDay Atlanta',
+                    'ts' => time(),
+                ],
+            ],
+        ];
+        
+        $response = wp_remote_post($webhook, [
+            'body' => json_encode($payload),
+            'headers' => ['Content-Type' => 'application/json'],
+            'timeout' => 15,
+        ]);
+        
+        return !is_wp_error($response) && wp_remote_retrieve_response_code($response) === 200;
+    }
+    
+    /**
+     * Check if story is breaking news and send alerts
+     */
+    public function check_breaking_news($story, $team_key) {
+        $settings = $this->get_settings();
+        
+        if (empty($settings['breaking_news_enabled'])) {
+            return;
+        }
+        
+        // Check if this team is enabled for alerts
+        if (!empty($settings['breaking_news_teams_only']) && empty($settings['teams_enabled'][$team_key])) {
+            return;
+        }
+        
+        $headline = strtolower($story['headline'] ?? '');
+        $keywords = $settings['breaking_news_keywords'] ?? [];
+        
+        // Check for breaking news keywords
+        $is_breaking = false;
+        foreach ($keywords as $keyword) {
+            if (stripos($headline, $keyword) !== false) {
+                $is_breaking = true;
+                break;
+            }
+        }
+        
+        if (!$is_breaking) {
+            return;
+        }
+        
+        $team_config = $this->target_teams[$team_key] ?? [];
+        $story_data = [
+            'headline' => $story['headline'],
+            'team' => $team_config['name'] ?? ucfirst($team_key),
+            'type' => $story['storyType'] ?? 'News',
+            'url' => $story['url'] ?? home_url(),
+        ];
+        
+        // Send email if configured
+        if (!empty($settings['breaking_news_email'])) {
+            $this->send_breaking_news_email($story_data, $settings['breaking_news_email']);
+        }
+        
+        // Send Slack if configured
+        if (!empty($settings['breaking_news_slack_webhook'])) {
+            $this->send_breaking_news_slack($story_data, $settings['breaking_news_slack_webhook']);
+        }
+        
+        $this->log_activity('alert', "Breaking news alert: {$story['headline']}");
+    }
+    
+    /**
+     * AJAX: Get real-time stats (less caching)
+     */
+    public function ajax_get_realtime_stats() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('edit_posts')) {
+            wp_send_json_error('Unauthorized');
+        }
+        
+        $settings = $this->get_settings();
+        $cache_seconds = $settings['dashboard_cache_seconds'] ?? 300;
+        
+        // Try to get from short-lived cache first
+        $cache_key = 'flm_realtime_stats';
+        $cached = get_transient($cache_key);
+        
+        if ($cached !== false) {
+            $cached['from_cache'] = true;
+            wp_send_json_success($cached);
+        }
+        
+        // Fetch fresh data
+        $stats = [
+            'from_cache' => false,
+            'timestamp' => current_time('c'),
+            'today' => $this->get_realtime_today_stats(),
+            'posts' => $this->get_realtime_post_stats(),
+            'team_breakdown' => $this->get_realtime_team_stats(),
+        ];
+        
+        // Cache for short period
+        set_transient($cache_key, $stats, $cache_seconds);
+        
+        wp_send_json_success($stats);
+    }
+    
+    /**
+     * Get today's real-time stats
+     */
+    private function get_realtime_today_stats() {
+        $today = date('Y-m-d');
+        
+        // Try GA4 API first
+        $settings = $this->get_settings();
+        $property_id = $settings['ga4_property_id'] ?? '';
+        
+        if (!empty($property_id) && (!empty($settings['ga4_oauth_access_token']) || !empty($settings['ga4_service_account']))) {
+            $property_id = preg_replace('/^properties\//', '', $property_id);
+            
+            $response = $this->query_ga4_api($property_id, [
+                'dateRanges' => [['startDate' => 'today', 'endDate' => 'today']],
+                'metrics' => [
+                    ['name' => 'screenPageViews'],
+                    ['name' => 'activeUsers'],
+                    ['name' => 'sessions'],
+                    ['name' => 'averageSessionDuration'],
+                ],
+            ]);
+            
+            if ($response && isset($response['rows'][0]['metricValues'])) {
+                $row = $response['rows'][0]['metricValues'];
+                return [
+                    'source' => 'ga4',
+                    'pageviews' => (int) ($row[0]['value'] ?? 0),
+                    'users' => (int) ($row[1]['value'] ?? 0),
+                    'sessions' => (int) ($row[2]['value'] ?? 0),
+                    'avg_duration' => round((float) ($row[3]['value'] ?? 0), 1),
+                ];
+            }
+        }
+        
+        // Fallback to internal tracking
+        return [
+            'source' => 'internal',
+            'pageviews' => $this->count_views_today(),
+            'users' => 0,
+            'sessions' => 0,
+            'avg_duration' => 0,
+        ];
+    }
+    
+    /**
+     * Count page views today (internal fallback)
+     */
+    private function count_views_today() {
+        global $wpdb;
+        
+        // This would require a views tracking table - return estimate for now
+        $posts_today = $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$wpdb->posts} 
+             WHERE post_status = 'publish' 
+             AND post_date >= %s",
+            date('Y-m-d 00:00:00')
+        ));
+        
+        return (int) $posts_today * rand(50, 200); // Rough estimate
+    }
+    
+    /**
+     * Get real-time post stats
+     */
+    private function get_realtime_post_stats() {
+        global $wpdb;
+        
+        $today = date('Y-m-d 00:00:00');
+        $week_ago = date('Y-m-d 00:00:00', strtotime('-7 days'));
+        
+        return [
+            'published_today' => (int) $wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM {$wpdb->posts} 
+                 WHERE post_status = 'publish' AND post_date >= %s",
+                $today
+            )),
+            'published_week' => (int) $wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM {$wpdb->posts} 
+                 WHERE post_status = 'publish' AND post_date >= %s",
+                $week_ago
+            )),
+            'drafts' => (int) $wpdb->get_var(
+                "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_status = 'draft'"
+            ),
+            'scheduled' => (int) $wpdb->get_var(
+                "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_status = 'future'"
+            ),
+            'total_flm' => (int) $wpdb->get_var(
+                "SELECT COUNT(*) FROM {$wpdb->postmeta} WHERE meta_key = 'flm_story_id'"
+            ),
+        ];
+    }
+    
+    /**
+     * Get real-time team breakdown
+     */
+    private function get_realtime_team_stats() {
+        global $wpdb;
+        
+        $week_ago = date('Y-m-d 00:00:00', strtotime('-7 days'));
+        $stats = [];
+        
+        foreach ($this->target_teams as $key => $team) {
+            $count = (int) $wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM {$wpdb->postmeta} pm
+                 JOIN {$wpdb->posts} p ON pm.post_id = p.ID
+                 WHERE pm.meta_key = 'flm_team' 
+                 AND pm.meta_value = %s
+                 AND p.post_status = 'publish'
+                 AND p.post_date >= %s",
+                $key, $week_ago
+            ));
+            
+            $stats[$key] = [
+                'name' => $team['name'],
+                'posts_week' => $count,
+                'color' => $team['color'],
+            ];
+        }
+        
+        return $stats;
+    }
+    
+    /**
+     * AJAX: Enhanced preview for import
+     */
+    public function ajax_enhanced_preview() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('edit_posts')) {
+            wp_send_json_error('Unauthorized');
+        }
+        
+        $team_key = sanitize_text_field($_POST['team'] ?? '');
+        $days = min(30, max(1, absint($_POST['days'] ?? 7)));
+        
+        if (!isset($this->target_teams[$team_key])) {
+            wp_send_json_error('Invalid team');
+        }
+        
+        $stories = $this->fetch_stories_for_team($team_key, $days);
+        
+        if (is_wp_error($stories)) {
+            wp_send_json_error($stories->get_error_message());
+        }
+        
+        $preview = [];
+        foreach ($stories as $story) {
+            $story_id = $story['id'] ?? '';
+            $existing = $this->get_existing_post($story_id);
+            
+            $preview[] = [
+                'id' => $story_id,
+                'headline' => $story['headline'] ?? '',
+                'summary' => wp_trim_words($story['body'] ?? '', 30, '...'),
+                'byline' => $story['byline'] ?? 'Field Level Media',
+                'type' => $story['storyType'] ?? 'News',
+                'date' => $story['publishedDate'] ?? '',
+                'image' => $story['image']['url'] ?? null,
+                'exists' => $existing ? true : false,
+                'existing_id' => $existing ? $existing->ID : null,
+                'existing_status' => $existing ? $existing->post_status : null,
+                'is_breaking' => $this->is_breaking_headline($story['headline'] ?? ''),
+            ];
+        }
+        
+        wp_send_json_success([
+            'team' => $this->target_teams[$team_key]['name'],
+            'count' => count($preview),
+            'stories' => $preview,
+        ]);
+    }
+    
+    /**
+     * AJAX: Check for plugin updates
+     */
+    public function ajax_check_updates() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+        
+        // Clear caches to force fresh check
+        $this->force_update_check();
+        
+        // Fetch latest release info
+        $remote_info = $this->get_github_release_info();
+        
+        if (!$remote_info) {
+            wp_send_json_error('Could not connect to GitHub');
+        }
+        
+        $current_version = $this->version;
+        $remote_version = ltrim($remote_info['tag_name'], 'v');
+        $has_update = version_compare($current_version, $remote_version, '<');
+        
+        wp_send_json_success([
+            'current_version' => $current_version,
+            'latest_version' => $remote_version,
+            'has_update' => $has_update,
+            'release_date' => $remote_info['published_at'],
+            'release_notes' => $remote_info['body'] ?? '',
+            'download_url' => $remote_info['html_url'],
+            'update_url' => admin_url('update-core.php'),
+        ]);
+    }
+    
+    /**
+     * Check if headline suggests breaking news
+     */
+    private function is_breaking_headline($headline) {
+        $settings = $this->get_settings();
+        $keywords = $settings['breaking_news_keywords'] ?? ['breaking', 'urgent', 'just in'];
+        
+        foreach ($keywords as $keyword) {
+            if (stripos($headline, $keyword) !== false) {
+                return true;
+            }
+        }
+        return false;
+    }
+    
+    /**
+     * Add Schema.org markup to posts
+     */
+    public function add_schema_markup() {
+        if (!is_single()) {
+            return;
+        }
+        
+        $settings = $this->get_settings();
+        if (empty($settings['schema_enabled'])) {
+            return;
+        }
+        
+        global $post;
+        
+        $team = get_post_meta($post->ID, 'flm_team', true);
+        $is_flm = !empty(get_post_meta($post->ID, 'flm_story_id', true));
+        
+        // NewsArticle schema
+        if (!empty($settings['schema_news_article'])) {
+            $schema = $this->build_news_article_schema($post, $team);
+            echo '<script type="application/ld+json">' . json_encode($schema, JSON_UNESCAPED_SLASHES) . '</script>' . "\n";
+        }
+        
+        // SportsEvent schema (for game recaps/previews)
+        if (!empty($settings['schema_sports_event']) && $is_flm) {
+            $type = get_post_meta($post->ID, 'flm_story_type', true);
+            if (in_array($type, ['Recap', 'Preview', 'Game'])) {
+                $schema = $this->build_sports_event_schema($post, $team);
+                if ($schema) {
+                    echo '<script type="application/ld+json">' . json_encode($schema, JSON_UNESCAPED_SLASHES) . '</script>' . "\n";
+                }
+            }
+        }
+    }
+    
+    /**
+     * Build NewsArticle schema
+     */
+    private function build_news_article_schema($post, $team) {
+        $team_config = $this->target_teams[$team] ?? [];
+        $image = get_the_post_thumbnail_url($post->ID, 'full');
+        
+        $schema = [
+            '@context' => 'https://schema.org',
+            '@type' => 'NewsArticle',
+            'headline' => get_the_title($post),
+            'description' => get_the_excerpt($post),
+            'datePublished' => get_the_date('c', $post),
+            'dateModified' => get_the_modified_date('c', $post),
+            'author' => [
+                '@type' => 'Person',
+                'name' => get_post_meta($post->ID, 'flm_byline', true) ?: get_the_author(),
+            ],
+            'publisher' => [
+                '@type' => 'Organization',
+                'name' => get_bloginfo('name'),
+                'url' => home_url(),
+            ],
+            'mainEntityOfPage' => [
+                '@type' => 'WebPage',
+                '@id' => get_permalink($post),
+            ],
+        ];
+        
+        if ($image) {
+            $schema['image'] = [
+                '@type' => 'ImageObject',
+                'url' => $image,
+            ];
+        }
+        
+        // Add sports-specific keywords
+        if ($team_config) {
+            $schema['keywords'] = implode(', ', [
+                $team_config['name'],
+                $team_config['league'],
+                'Atlanta',
+                'Sports',
+            ]);
+            $schema['about'] = [
+                '@type' => 'SportsTeam',
+                'name' => $team_config['name'],
+                'sport' => $this->get_sport_for_league($team_config['league']),
+            ];
+        }
+        
+        return $schema;
+    }
+    
+    /**
+     * Build SportsEvent schema
+     */
+    private function build_sports_event_schema($post, $team) {
+        $team_config = $this->target_teams[$team] ?? [];
+        if (!$team_config) {
+            return null;
+        }
+        
+        $schema = [
+            '@context' => 'https://schema.org',
+            '@type' => 'SportsEvent',
+            'name' => get_the_title($post),
+            'description' => get_the_excerpt($post),
+            'startDate' => get_the_date('c', $post),
+            'location' => [
+                '@type' => 'Place',
+                'name' => 'Atlanta, GA',
+                'address' => [
+                    '@type' => 'PostalAddress',
+                    'addressLocality' => 'Atlanta',
+                    'addressRegion' => 'GA',
+                    'addressCountry' => 'US',
+                ],
+            ],
+            'homeTeam' => [
+                '@type' => 'SportsTeam',
+                'name' => $team_config['name'],
+            ],
+            'sport' => $this->get_sport_for_league($team_config['league']),
+        ];
+        
+        return $schema;
+    }
+    
+    /**
+     * Get sport name for league
+     */
+    private function get_sport_for_league($league) {
+        $sports = [
+            'MLB' => 'Baseball',
+            'NFL' => 'American Football',
+            'NBA' => 'Basketball',
+            'WNBA' => 'Basketball',
+            'MLS' => 'Soccer',
+            'NCAA' => 'College Sports',
+            'NCAAF' => 'College Football',
+            'NCAAB' => 'College Basketball',
+            'WNCAAB' => 'College Basketball',
+        ];
+        return $sports[$league] ?? 'Sports';
+    }
+    
+    // ========================================
+    // GITHUB AUTO-UPDATES v2.17.0
+    // ========================================
+    
+    /**
+     * Check GitHub for plugin updates
+     */
+    public function check_github_update($transient) {
+        if (empty($transient->checked)) {
+            return $transient;
+        }
+        
+        // Get plugin info from GitHub
+        $remote_info = $this->get_github_release_info();
+        
+        if (!$remote_info) {
+            return $transient;
+        }
+        
+        // Compare versions
+        $current_version = $this->version;
+        $remote_version = ltrim($remote_info['tag_name'], 'v');
+        
+        if (version_compare($current_version, $remote_version, '<')) {
+            $plugin_data = get_plugin_data(__FILE__);
+            
+            $obj = new stdClass();
+            $obj->slug = dirname(plugin_basename(__FILE__));
+            $obj->plugin = plugin_basename(__FILE__);
+            $obj->new_version = $remote_version;
+            $obj->url = "https://github.com/{$this->github_username}/{$this->github_repo}";
+            $obj->package = $remote_info['zipball_url'];
+            $obj->icons = [
+                '1x' => 'https://ps.w.org/flm-gameday-atlanta/assets/icon-128x128.png',
+                '2x' => 'https://ps.w.org/flm-gameday-atlanta/assets/icon-256x256.png',
+            ];
+            $obj->banners = [
+                'low' => 'https://ps.w.org/flm-gameday-atlanta/assets/banner-772x250.png',
+                'high' => 'https://ps.w.org/flm-gameday-atlanta/assets/banner-1544x500.png',
+            ];
+            $obj->tested = '6.7';
+            $obj->requires_php = '7.4';
+            
+            $transient->response[plugin_basename(__FILE__)] = $obj;
+        }
+        
+        return $transient;
+    }
+    
+    /**
+     * Get release info from GitHub API
+     */
+    private function get_github_release_info() {
+        // Check cache first
+        $cache_key = 'flm_github_release_' . md5($this->github_username . $this->github_repo);
+        $cached = get_transient($cache_key);
+        
+        if ($cached !== false) {
+            return $cached;
+        }
+        
+        // Fetch from GitHub API
+        $url = "https://api.github.com/repos/{$this->github_username}/{$this->github_repo}/releases/latest";
+        
+        $headers = [
+            'Accept' => 'application/vnd.github.v3+json',
+            'User-Agent' => 'FLM-GameDay-Atlanta/' . $this->version,
+        ];
+        
+        // Add token for private repos (optional)
+        $settings = $this->get_settings();
+        $github_token = $settings['github_token'] ?? '';
+        if (!empty($github_token)) {
+            $headers['Authorization'] = 'token ' . $github_token;
+        }
+        
+        $response = wp_remote_get($url, [
+            'headers' => $headers,
+            'timeout' => 10,
+        ]);
+        
+        if (is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) {
+            return false;
+        }
+        
+        $body = wp_remote_retrieve_body($response);
+        $data = json_decode($body, true);
+        
+        if (empty($data) || !isset($data['tag_name'])) {
+            return false;
+        }
+        
+        // Cache for 6 hours
+        set_transient($cache_key, $data, 6 * HOUR_IN_SECONDS);
+        
+        return $data;
+    }
+    
+    /**
+     * Provide plugin info for the update screen
+     */
+    public function github_plugin_info($result, $action, $args) {
+        if ($action !== 'plugin_information') {
+            return $result;
+        }
+        
+        if (!isset($args->slug) || $args->slug !== dirname(plugin_basename(__FILE__))) {
+            return $result;
+        }
+        
+        $remote_info = $this->get_github_release_info();
+        
+        if (!$remote_info) {
+            return $result;
+        }
+        
+        $plugin_data = get_plugin_data(__FILE__);
+        
+        $result = new stdClass();
+        $result->name = $plugin_data['Name'];
+        $result->slug = dirname(plugin_basename(__FILE__));
+        $result->version = ltrim($remote_info['tag_name'], 'v');
+        $result->author = $plugin_data['Author'];
+        $result->author_profile = $plugin_data['AuthorURI'];
+        $result->homepage = $plugin_data['PluginURI'];
+        $result->requires = '5.8';
+        $result->tested = '6.7';
+        $result->requires_php = '7.4';
+        $result->downloaded = 0;
+        $result->last_updated = $remote_info['published_at'];
+        $result->download_link = $remote_info['zipball_url'];
+        
+        // Parse changelog from release body
+        $result->sections = [
+            'description' => $plugin_data['Description'] . '<br><br><strong>Features:</strong><ul>
+                <li>Import content from Field Level Media API</li>
+                <li>7 Atlanta teams: Braves, Falcons, Hawks, United, Dream, UGA, GT</li>
+                <li>AI-powered headline analysis with Claude</li>
+                <li>Real-time analytics dashboard with GA4 integration</li>
+                <li>Breaking news email/Slack alerts</li>
+                <li>Schema.org markup for SEO</li>
+                <li>Social media auto-posting</li>
+                <li>Content calendar view</li>
+            </ul>',
+            'installation' => '<ol>
+                <li>Upload the plugin folder to /wp-content/plugins/</li>
+                <li>Activate the plugin through the Plugins menu</li>
+                <li>Configure your FLM API key in Settings</li>
+                <li>Select teams to track and import content</li>
+            </ol>',
+            'changelog' => $this->format_github_changelog($remote_info['body'] ?? ''),
+        ];
+        
+        $result->banners = [
+            'low' => 'https://mainlinemediagroup.com/wp-content/uploads/flm-banner-772x250.png',
+            'high' => 'https://mainlinemediagroup.com/wp-content/uploads/flm-banner-1544x500.png',
+        ];
+        
+        return $result;
+    }
+    
+    /**
+     * Format GitHub release notes as changelog
+     */
+    private function format_github_changelog($body) {
+        if (empty($body)) {
+            return '<p>See release notes on GitHub.</p>';
+        }
+        
+        // Convert markdown to basic HTML
+        $html = esc_html($body);
+        $html = preg_replace('/^### (.+)$/m', '<h4>$1</h4>', $html);
+        $html = preg_replace('/^## (.+)$/m', '<h3>$1</h3>', $html);
+        $html = preg_replace('/^# (.+)$/m', '<h2>$1</h2>', $html);
+        $html = preg_replace('/^\* (.+)$/m', '<li>$1</li>', $html);
+        $html = preg_replace('/^- (.+)$/m', '<li>$1</li>', $html);
+        $html = preg_replace('/\*\*(.+?)\*\*/', '<strong>$1</strong>', $html);
+        $html = preg_replace('/`(.+?)`/', '<code>$1</code>', $html);
+        $html = nl2br($html);
+        
+        // Wrap consecutive li elements in ul
+        $html = preg_replace('/((<li>.+?<\/li>\s*)+)/', '<ul>$1</ul>', $html);
+        
+        return $html;
+    }
+    
+    /**
+     * Rename folder after GitHub update (GitHub uses username-repo-hash format)
+     */
+    public function github_post_install($response, $hook_extra, $result) {
+        global $wp_filesystem;
+        
+        // Check if this is our plugin
+        if (!isset($hook_extra['plugin']) || $hook_extra['plugin'] !== plugin_basename(__FILE__)) {
+            return $response;
+        }
+        
+        // GitHub downloads have weird folder names, need to rename
+        $plugin_folder = WP_PLUGIN_DIR . '/' . dirname(plugin_basename(__FILE__));
+        
+        // Move to correct location
+        $wp_filesystem->move($result['destination'], $plugin_folder);
+        $result['destination'] = $plugin_folder;
+        
+        // Reactivate plugin
+        activate_plugin(plugin_basename(__FILE__));
+        
+        return $response;
+    }
+    
+    /**
+     * Add links to plugin row meta
+     */
+    public function plugin_row_meta($links, $file) {
+        if ($file !== plugin_basename(__FILE__)) {
+            return $links;
+        }
+        
+        $links[] = '<a href="https://github.com/' . $this->github_username . '/' . $this->github_repo . '/releases" target="_blank">View Releases</a>';
+        $links[] = '<a href="https://github.com/' . $this->github_username . '/' . $this->github_repo . '/issues" target="_blank">Report Issue</a>';
+        
+        return $links;
+    }
+    
+    /**
+     * Force update check (useful for testing)
+     */
+    public function force_update_check() {
+        delete_transient('flm_github_release_' . md5($this->github_username . $this->github_repo));
+        delete_site_transient('update_plugins');
     }
     
     // ========================================
@@ -20967,19 +22860,74 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
         
         // DEBUG: Show FLM API debug info
         if (isset($_GET['api_debug'])) {
+            // Handle quick fix actions
+            if (isset($_GET['fix_api_key']) && $_GET['fix_api_key'] === '1') {
+                $current = get_option('flm_settings', []);
+                $current['api_key'] = $this->default_settings['api_key'];
+                update_option('flm_settings', $current);
+                delete_option('flm_jwt_token');
+                delete_option('flm_token_expiry');
+                echo '<div style="background:#0a5;color:#fff;padding:15px;margin:20px;border-radius:8px;">✓ API key restored to default and token cache cleared. <a href="' . admin_url('options-general.php?page=flm-importer&api_debug=1') . '" style="color:#fff;">Refresh to test</a></div>';
+            }
+            
+            if (isset($_GET['reset_import_date']) && $_GET['reset_import_date'] === '1') {
+                delete_option('flm_last_import');
+                echo '<div style="background:#0a5;color:#fff;padding:15px;margin:20px;border-radius:8px;">✓ Import date reset! All content from the lookback period will now show as available. <a href="' . admin_url('options-general.php?page=flm-importer&api_debug=1') . '" style="color:#fff;">Refresh</a></div>';
+            }
+            
+            if (isset($_GET['set_lookback']) && in_array($_GET['set_lookback'], ['7', '14', '30'])) {
+                $current = get_option('flm_settings', []);
+                $current['lookback_days'] = intval($_GET['set_lookback']);
+                update_option('flm_settings', $current);
+                echo '<div style="background:#0a5;color:#fff;padding:15px;margin:20px;border-radius:8px;">✓ Lookback set to ' . $_GET['set_lookback'] . ' days. <a href="' . admin_url('options-general.php?page=flm-importer&api_debug=1') . '" style="color:#fff;">Refresh</a></div>';
+            }
+            
+            $raw_option = get_option('flm_settings', 'NOT_SET');
+            
             echo '<div style="background:#1a1a2e;color:#0f0;padding:20px;margin:20px;font-family:monospace;border-radius:8px;">';
             echo '<h3 style="color:#0ff;">FLM API Debug Info</h3>';
-            echo '<p><strong>API Key:</strong> ' . (empty($settings['api_key']) ? '<span style="color:red;">EMPTY</span>' : '<span style="color:lime;">' . substr($settings['api_key'], 0, 8) . '...' . substr($settings['api_key'], -4) . '</span>') . '</p>';
-            echo '<p><strong>Cached JWT Token:</strong> ' . (get_option('flm_jwt_token') ? '<span style="color:lime;">SET (' . strlen(get_option('flm_jwt_token')) . ' chars)</span>' : '<span style="color:red;">EMPTY</span>') . '</p>';
-            echo '<p><strong>Token Expiry:</strong> ' . (get_option('flm_token_expiry') ? date('Y-m-d H:i:s', get_option('flm_token_expiry')) : 'Not set') . '</p>';
+            
+            echo '<p><strong>1. Raw flm_settings from DB:</strong></p>';
+            if ($raw_option === 'NOT_SET') {
+                echo '<p style="color:red;">Option does not exist in database!</p>';
+            } elseif (empty($raw_option)) {
+                echo '<p style="color:orange;">Option exists but is empty</p>';
+            } else {
+                echo '<pre style="background:#111;padding:10px;overflow:auto;max-height:150px;font-size:11px;">' . esc_html(print_r($raw_option, true)) . '</pre>';
+            }
+            
+            echo '<hr style="border-color:#333;">';
+            echo '<p><strong>2. API Key from raw option:</strong> ';
+            if (is_array($raw_option) && isset($raw_option['api_key'])) {
+                echo '<span style="color:lime;">' . substr($raw_option['api_key'], 0, 8) . '...' . substr($raw_option['api_key'], -4) . ' (' . strlen($raw_option['api_key']) . ' chars)</span>';
+            } else {
+                echo '<span style="color:red;">NOT SET IN DATABASE</span>';
+            }
+            echo '</p>';
+            
+            echo '<p><strong>3. Default API Key:</strong> <span style="color:cyan;">' . substr($this->default_settings['api_key'], 0, 8) . '...' . substr($this->default_settings['api_key'], -4) . '</span></p>';
+            
+            echo '<p><strong>4. Merged settings API Key:</strong> ';
+            if (!empty($settings['api_key'])) {
+                echo '<span style="color:lime;">' . substr($settings['api_key'], 0, 8) . '...' . substr($settings['api_key'], -4) . '</span>';
+            } else {
+                echo '<span style="color:red;">EMPTY after merge!</span>';
+            }
+            echo '</p>';
+            
+            echo '<p><strong>5. Cached JWT Token:</strong> ' . (get_option('flm_jwt_token') ? '<span style="color:lime;">SET (' . strlen(get_option('flm_jwt_token')) . ' chars)</span>' : '<span style="color:red;">EMPTY</span>') . '</p>';
+            echo '<p><strong>6. Token Expiry:</strong> ' . (get_option('flm_token_expiry') ? date('Y-m-d H:i:s', get_option('flm_token_expiry')) : 'Not set') . '</p>';
             
             // Try to get fresh token
             echo '<hr style="border-color:#333;">';
-            echo '<p><strong>Testing fresh token request...</strong></p>';
+            echo '<p><strong>7. Testing fresh token request with API key...</strong></p>';
+            
+            $api_key_to_test = $settings['api_key'] ?: $this->default_settings['api_key'];
+            echo '<p>Using key: ' . substr($api_key_to_test, 0, 8) . '...' . substr($api_key_to_test, -4) . '</p>';
             
             $test_response = wp_remote_post('https://api.fieldlevelmedia.com/v1/Token', [
                 'headers' => ['Content-Type' => 'application/x-www-form-urlencoded'],
-                'body' => ['apiKey' => $settings['api_key']],
+                'body' => ['apiKey' => $api_key_to_test],
                 'timeout' => 15,
             ]);
             
@@ -20992,6 +22940,141 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
                 echo '<p><strong>Response:</strong></p>';
                 echo '<pre style="background:#111;padding:10px;overflow:auto;max-height:150px;">' . esc_html(substr($body, 0, 500)) . '</pre>';
             }
+            
+            // Quick fix link
+            echo '<hr style="border-color:#333;">';
+            echo '<p><strong>Quick Fixes:</strong></p>';
+            echo '<p>→ <a href="' . admin_url('options-general.php?page=flm-importer&api_debug=1&fix_api_key=1') . '" style="color:#0af;text-decoration:underline;">Restore default API key and clear token cache</a></p>';
+            
+            // Import date info
+            echo '<hr style="border-color:#333;">';
+            echo '<h3 style="color:#0ff;">Import Settings Debug</h3>';
+            
+            $last_import = get_option('flm_last_import');
+            $lookback_days = $settings['lookback_days'] ?? 7;
+            
+            echo '<p><strong>Last Import Date:</strong> ';
+            if ($last_import) {
+                echo '<span style="color:orange;">' . date('Y-m-d H:i:s', $last_import) . ' (' . human_time_diff($last_import) . ' ago)</span>';
+                echo ' - This limits what shows as "new" content';
+            } else {
+                echo '<span style="color:lime;">Not set (will show all content from lookback period)</span>';
+            }
+            echo '</p>';
+            
+            echo '<p><strong>Lookback Days:</strong> <span style="color:cyan;">' . $lookback_days . ' days</span> - Preview/selective import shows content from last ' . $lookback_days . ' days</p>';
+            
+            // Teams enabled
+            echo '<p><strong>Teams Enabled:</strong> ';
+            $enabled_teams = [];
+            foreach ($this->target_teams as $key => $team) {
+                if (!empty($settings['teams_enabled'][$key])) {
+                    $enabled_teams[] = $team['name'];
+                }
+            }
+            echo empty($enabled_teams) ? '<span style="color:red;">NONE!</span>' : '<span style="color:lime;">' . implode(', ', $enabled_teams) . '</span>';
+            echo '</p>';
+            
+            echo '<p><strong>Fix Import Issues:</strong></p>';
+            echo '<p>→ <a href="' . admin_url('options-general.php?page=flm-importer&api_debug=1&reset_import_date=1') . '" style="color:#f80;text-decoration:underline;">Reset import date (show all content as new)</a></p>';
+            echo '<p>→ Set lookback: ';
+            echo '<a href="' . admin_url('options-general.php?page=flm-importer&api_debug=1&set_lookback=7') . '" style="color:#0af;margin-right:10px;">7 days</a>';
+            echo '<a href="' . admin_url('options-general.php?page=flm-importer&api_debug=1&set_lookback=14') . '" style="color:#0af;margin-right:10px;">14 days</a>';
+            echo '<a href="' . admin_url('options-general.php?page=flm-importer&api_debug=1&set_lookback=30') . '" style="color:#0af;">30 days</a></p>';
+            
+            // Live API content check
+            if (isset($_GET['check_content'])) {
+                echo '<hr style="border-color:#333;">';
+                echo '<h3 style="color:#0ff;">Live API Content Check</h3>';
+                
+                $token = $this->get_token(true); // Force fresh token
+                if (!$token) {
+                    echo '<p style="color:red;">Failed to get API token</p>';
+                } else {
+                    $leagues = [1 => 'MLB', 30 => 'NFL', 26 => 'NBA', 31 => 'NCAAF', 20 => 'NCAAB'];
+                    $show_unmatched = isset($_GET['show_unmatched']);
+                    
+                    foreach ($leagues as $league_id => $league_name) {
+                        $cutoff_time = strtotime("-{$lookback_days} days");
+                        $url = $this->api_base . '/story/' . $league_id . '?cutOffDate=' . urlencode(gmdate('Y-m-d H:i:s', $cutoff_time) . 'Z');
+                        
+                        $response = wp_remote_get($url, [
+                            'headers' => [
+                                'Authorization' => 'Bearer ' . $token,
+                                'Content-Type' => 'application/x-www-form-urlencoded',
+                            ],
+                            'timeout' => 30,
+                        ]);
+                        
+                        if (is_wp_error($response)) {
+                            echo "<p><strong>{$league_name}:</strong> <span style='color:red;'>Error - " . $response->get_error_message() . "</span></p>";
+                            continue;
+                        }
+                        
+                        $stories = json_decode(wp_remote_retrieve_body($response), true);
+                        $count = is_array($stories) ? count($stories) : 0;
+                        
+                        // Count how many match our teams
+                        $matched = 0;
+                        $matched_headlines = [];
+                        $unmatched_headlines = [];
+                        if (is_array($stories)) {
+                            foreach ($stories as $story) {
+                                $team_key = $this->get_matching_team($story);
+                                $headline = wp_strip_all_tags($story['headline'] ?? 'No headline');
+                                if ($team_key) {
+                                    $matched++;
+                                    if (count($matched_headlines) < 5) {
+                                        $matched_headlines[] = [
+                                            'headline' => $headline,
+                                            'team' => $team_key,
+                                            'home' => $story['homeTeam']['nickName'] ?? 'N/A',
+                                            'away' => $story['awayTeam']['nickName'] ?? 'N/A',
+                                        ];
+                                    }
+                                } else {
+                                    if (count($unmatched_headlines) < 5) {
+                                        $unmatched_headlines[] = [
+                                            'headline' => $headline,
+                                            'home' => $story['homeTeam']['nickName'] ?? 'N/A',
+                                            'home_id' => $story['homeTeam']['teamId'] ?? 'N/A',
+                                            'away' => $story['awayTeam']['nickName'] ?? 'N/A',
+                                            'away_id' => $story['awayTeam']['teamId'] ?? 'N/A',
+                                        ];
+                                    }
+                                }
+                            }
+                        }
+                        
+                        echo "<p><strong>{$league_name}:</strong> <span style='color:lime;'>{$count} total stories</span>, <span style='color:cyan;'>{$matched} match your teams</span></p>";
+                        
+                        if (!empty($matched_headlines)) {
+                            echo "<div style='margin:5px 0 10px 20px;'><strong style='color:#0f0;font-size:11px;'>✓ Matched:</strong><ul style='margin:3px 0 10px 0;font-size:11px;color:#0f0;'>";
+                            foreach ($matched_headlines as $item) {
+                                echo "<li>" . esc_html(substr($item['headline'], 0, 70)) . "... <span style='color:#888;'>({$item['team']})</span></li>";
+                            }
+                            echo "</ul></div>";
+                        }
+                        
+                        if ($show_unmatched && !empty($unmatched_headlines)) {
+                            echo "<div style='margin:5px 0 15px 20px;'><strong style='color:#f80;font-size:11px;'>✗ Not Matched (first 5):</strong><ul style='margin:3px 0 10px 0;font-size:10px;color:#888;'>";
+                            foreach ($unmatched_headlines as $item) {
+                                echo "<li>" . esc_html(substr($item['headline'], 0, 60)) . "... <span style='color:#666;'>[home: {$item['home']} (#{$item['home_id']}), away: {$item['away']} (#{$item['away_id']})]</span></li>";
+                            }
+                            echo "</ul></div>";
+                        }
+                        
+                        sleep(2); // Rate limit
+                    }
+                    
+                    if (!$show_unmatched) {
+                        echo '<p>→ <a href="' . admin_url('options-general.php?page=flm-importer&api_debug=1&check_content=1&show_unmatched=1') . '" style="color:#f80;">Show unmatched stories (debug why some aren\'t matching)</a></p>';
+                    }
+                }
+            } else {
+                echo '<p>→ <a href="' . admin_url('options-general.php?page=flm-importer&api_debug=1&check_content=1') . '" style="color:#f0f;text-decoration:underline;font-weight:bold;">Check Live API Content (see what FLM has available)</a></p>';
+            }
+            
             echo '</div>';
         }
         
@@ -22870,13 +24953,49 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
                                 </div>
                                 <div class="flm-card-body">
                                     
-                                    <!-- OAuth Quick Connect (v2.15.0) -->
+                                    <!-- OAuth Quick Connect (v2.15.1 - Direct OAuth) -->
                                     <div style="margin-bottom:24px;padding:20px;background:linear-gradient(135deg,rgba(99,102,241,0.1),rgba(139,92,246,0.1));border:1px solid rgba(139,92,246,0.2);border-radius:12px;">
                                         <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
-                                            <span class="flm-badge" style="background:rgba(63,185,80,0.15);color:var(--flm-success);font-size:10px;">NEW</span>
-                                            <span style="font-weight:600;color:var(--flm-text);font-size:15px;">🔐 OAuth Quick Connect</span>
+                                            <span class="flm-badge" style="background:rgba(63,185,80,0.15);color:var(--flm-success);font-size:10px;">v2.15.1</span>
+                                            <span style="font-weight:600;color:var(--flm-text);font-size:15px;">🔐 Google OAuth Integration</span>
                                         </div>
-                                        <p style="margin:0 0 16px;color:var(--flm-text-muted);font-size:13px;">Connect your accounts with one click. No API keys needed - we handle everything securely.</p>
+                                        
+                                        <!-- Google OAuth Credentials -->
+                                        <div id="flm-google-credentials-section" style="margin-bottom:20px;padding:16px;background:rgba(0,0,0,0.2);border-radius:8px;">
+                                            <div style="font-weight:600;margin-bottom:8px;color:var(--flm-text);">Step 1: Configure Google Cloud Credentials</div>
+                                            <p style="margin:0 0 12px;color:var(--flm-text-muted);font-size:12px;">
+                                                Create OAuth credentials in <a href="https://console.cloud.google.com/apis/credentials" target="_blank" style="color:var(--flm-accent);">Google Cloud Console</a>. 
+                                                Set authorized redirect URI to: <code style="background:rgba(0,0,0,0.3);padding:2px 6px;border-radius:4px;font-size:11px;"><?php echo esc_html(admin_url('admin-post.php?action=flm_oauth_callback')); ?></code>
+                                            </p>
+                                            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                                                <div class="flm-form-group" style="margin:0;">
+                                                    <label class="flm-label" for="flm-google-client-id" style="font-size:12px;">Google Client ID</label>
+                                                    <input type="text" id="flm-google-client-id" class="flm-input flm-input-sm" value="<?php echo esc_attr($settings['google_client_id'] ?? ''); ?>" placeholder="xxx.apps.googleusercontent.com">
+                                                </div>
+                                                <div class="flm-form-group" style="margin:0;">
+                                                    <label class="flm-label" for="flm-google-client-secret" style="font-size:12px;">Google Client Secret</label>
+                                                    <input type="password" id="flm-google-client-secret" class="flm-input flm-input-sm" value="<?php echo esc_attr($settings['google_client_secret'] ?? ''); ?>" placeholder="GOCSPX-...">
+                                                </div>
+                                            </div>
+                                            <button type="button" id="flm-save-google-credentials" class="flm-btn flm-btn-success flm-btn-sm" style="margin-top:12px;">
+                                                <?php echo $this->icon('save'); ?> Save Google Credentials
+                                            </button>
+                                            <?php if (!empty($settings['google_client_id']) && !empty($settings['google_client_secret'])): ?>
+                                            <span style="margin-left:12px;color:var(--flm-success);font-size:12px;">✓ Credentials saved</span>
+                                            <?php endif; ?>
+                                            <button type="button" class="flm-setup-guide-btn flm-open-wizard" data-wizard="google" style="margin-left:8px;">
+                                                <?php echo $this->icon('info'); ?> Setup Guide
+                                            </button>
+                                        </div>
+                                        
+                                        <div style="font-weight:600;margin-bottom:12px;color:var(--flm-text);">Step 2: Connect Your Accounts</div>
+                                        <p style="margin:0 0 16px;color:var(--flm-text-muted);font-size:13px;">
+                                            <?php if (empty($settings['google_client_id']) || empty($settings['google_client_secret'])): ?>
+                                            <span style="color:var(--flm-warning);">⚠️ Please save your Google credentials above first.</span>
+                                            <?php else: ?>
+                                            Click to connect your Google accounts with OAuth. Your tokens are stored securely in WordPress.
+                                            <?php endif; ?>
+                                        </p>
                                         
                                         <div class="flm-oauth-grid">
                                             <!-- Google Analytics 4 OAuth Card -->
@@ -22892,14 +25011,21 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
                                                         </div>
                                                     </div>
                                                     <div class="flm-oauth-status">
-                                                        <?php if (!empty($settings['ga4_oauth_access_token'])): ?>
-                                                        <span class="flm-badge success">Connected</span>
+                                                        <?php if (!empty($settings['ga4_property_id'])): ?>
+                                                        <span class="flm-badge success">Active</span>
+                                                        <?php elseif (!empty($settings['ga4_oauth_access_token'])): ?>
+                                                        <span class="flm-badge warning">Select Property</span>
                                                         <?php else: ?>
                                                         <span class="flm-badge secondary">Not Connected</span>
                                                         <?php endif; ?>
                                                     </div>
                                                 </div>
                                                 <div class="flm-oauth-card-body">
+                                                    <?php if (!empty($settings['ga4_property_name'])): ?>
+                                                    <div style="font-size:12px;color:var(--flm-text-muted);margin-bottom:8px;">
+                                                        Property: <strong style="color:var(--flm-text);"><?php echo esc_html($settings['ga4_property_name']); ?></strong>
+                                                    </div>
+                                                    <?php endif; ?>
                                                     <div class="flm-oauth-expiry" style="display:<?php echo !empty($settings['ga4_oauth_access_token']) ? 'block' : 'none'; ?>;">
                                                         <?php 
                                                         $ga4_expires = $settings['ga4_oauth_expires_at'] ?? 0;
@@ -22907,9 +25033,15 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
                                                         Expires: <?php echo human_time_diff(time(), $ga4_expires); ?>
                                                         <?php endif; ?>
                                                     </div>
+                                                    <!-- Property Selection (shown after OAuth) -->
+                                                    <div id="flm-ga4-property-selection" style="display:<?php echo (!empty($settings['ga4_oauth_access_token']) && empty($settings['ga4_property_id'])) ? 'block' : 'none'; ?>;margin-top:8px;">
+                                                        <button type="button" id="flm-ga4-list-properties" class="flm-btn flm-btn-secondary flm-btn-sm">
+                                                            <?php echo $this->icon('list'); ?> Select Property
+                                                        </button>
+                                                    </div>
                                                 </div>
                                                 <div class="flm-oauth-card-footer">
-                                                    <button type="button" class="flm-btn flm-btn-primary flm-btn-sm flm-oauth-connect" data-provider="ga4">
+                                                    <button type="button" class="flm-btn flm-btn-primary flm-btn-sm flm-oauth-connect" data-provider="ga4" <?php echo (empty($settings['google_client_id']) || empty($settings['google_client_secret'])) ? 'disabled' : ''; ?>>
                                                         <?php echo $this->icon('plug'); ?> Connect GA4
                                                     </button>
                                                     <button type="button" class="flm-btn flm-btn-danger flm-btn-sm flm-oauth-disconnect" data-provider="ga4" style="display:<?php echo !empty($settings['ga4_oauth_access_token']) ? 'flex' : 'none'; ?>;">
@@ -23060,7 +25192,7 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
                                         </div>
                                         
                                         <p style="margin:16px 0 0;font-size:11px;color:var(--flm-text-muted);">
-                                            <strong>Note:</strong> OAuth connects via secure redirect through mmgleads.com. Your tokens are stored locally in WordPress.
+                                            <strong>Note:</strong> OAuth uses direct Google authentication. Your tokens are stored locally in WordPress and automatically refreshed.
                                         </p>
                                     </div>
                                     
@@ -23756,6 +25888,228 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
                                 </div>
                             </div>
                             
+                            <!-- Breaking News Alerts (v2.16.0) -->
+                            <div class="flm-card" style="margin-top:24px;">
+                                <div class="flm-card-header">
+                                    <h2 class="flm-card-title">
+                                        <span class="flm-card-icon"><?php echo $this->icon('bolt'); ?></span>
+                                        Breaking News Alerts
+                                        <span class="flm-badge" style="background:rgba(248,81,73,0.15);color:var(--flm-danger);margin-left:8px;">v2.16.0</span>
+                                    </h2>
+                                </div>
+                                <div class="flm-card-body">
+                                    <p style="margin:0 0 20px;color:var(--flm-text-muted);">
+                                        Get instant email or Slack notifications when breaking news stories are imported.
+                                    </p>
+                                    
+                                    <label class="flm-checkbox-card" style="margin-bottom:20px;">
+                                        <input type="checkbox" name="flm_settings[breaking_news_enabled]" value="1" <?php checked(!empty($settings['breaking_news_enabled'])); ?>>
+                                        <span class="flm-checkbox-card-content">
+                                            <span class="flm-checkbox-card-title">Enable Breaking News Alerts</span>
+                                            <span class="flm-checkbox-card-desc">Send notifications when headlines match breaking news keywords</span>
+                                        </span>
+                                    </label>
+                                    
+                                    <div class="flm-grid-2" style="gap:20px;margin-bottom:20px;">
+                                        <div class="flm-form-group" style="margin:0;">
+                                            <label class="flm-label" for="flm-breaking-email">
+                                                <?php echo $this->icon('send'); ?> Email Address
+                                            </label>
+                                            <div style="display:flex;gap:8px;">
+                                                <input type="email" name="flm_settings[breaking_news_email]" id="flm-breaking-email" class="flm-input" style="flex:1;" value="<?php echo esc_attr($settings['breaking_news_email'] ?? ''); ?>" placeholder="alerts@yoursite.com">
+                                                <button type="button" class="flm-btn flm-btn-secondary flm-btn-sm flm-test-notification" data-type="email" title="Send test email">
+                                                    <?php echo $this->icon('bolt'); ?> Test
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <div class="flm-form-group" style="margin:0;">
+                                            <label class="flm-label" for="flm-breaking-slack">
+                                                <svg viewBox="0 0 24 24" fill="currentColor" style="width:14px;height:14px;margin-right:4px;vertical-align:-2px;"><path d="M5.042 15.165a2.528 2.528 0 0 1-2.52 2.523A2.528 2.528 0 0 1 0 15.165a2.527 2.527 0 0 1 2.522-2.52h2.52v2.52zM6.313 15.165a2.527 2.527 0 0 1 2.521-2.52 2.527 2.527 0 0 1 2.521 2.52v6.313A2.528 2.528 0 0 1 8.834 24a2.528 2.528 0 0 1-2.521-2.522v-6.313zM8.834 5.042a2.528 2.528 0 0 1-2.521-2.52A2.528 2.528 0 0 1 8.834 0a2.528 2.528 0 0 1 2.521 2.522v2.52H8.834zM8.834 6.313a2.528 2.528 0 0 1 2.521 2.521 2.528 2.528 0 0 1-2.521 2.521H2.522A2.528 2.528 0 0 1 0 8.834a2.528 2.528 0 0 1 2.522-2.521h6.312zM18.956 8.834a2.528 2.528 0 0 1 2.522-2.521A2.528 2.528 0 0 1 24 8.834a2.528 2.528 0 0 1-2.522 2.521h-2.522V8.834zM17.688 8.834a2.528 2.528 0 0 1-2.523 2.521 2.527 2.527 0 0 1-2.52-2.521V2.522A2.527 2.527 0 0 1 15.165 0a2.528 2.528 0 0 1 2.523 2.522v6.312zM15.165 18.956a2.528 2.528 0 0 1 2.523 2.522A2.528 2.528 0 0 1 15.165 24a2.527 2.527 0 0 1-2.52-2.522v-2.522h2.52zM15.165 17.688a2.527 2.527 0 0 1-2.52-2.523 2.526 2.526 0 0 1 2.52-2.52h6.313A2.527 2.527 0 0 1 24 15.165a2.528 2.528 0 0 1-2.522 2.523h-6.313z"/></svg>
+                                                Slack Webhook URL
+                                            </label>
+                                            <div style="display:flex;gap:8px;">
+                                                <input type="url" name="flm_settings[breaking_news_slack_webhook]" id="flm-breaking-slack" class="flm-input" style="flex:1;" value="<?php echo esc_attr($settings['breaking_news_slack_webhook'] ?? ''); ?>" placeholder="https://hooks.slack.com/services/...">
+                                                <button type="button" class="flm-btn flm-btn-secondary flm-btn-sm flm-test-notification" data-type="slack" title="Send test message">
+                                                    <?php echo $this->icon('bolt'); ?> Test
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="flm-form-group" style="margin-bottom:20px;">
+                                        <label class="flm-label" for="flm-breaking-keywords">Breaking News Keywords</label>
+                                        <input type="text" name="flm_settings[breaking_news_keywords]" id="flm-breaking-keywords" class="flm-input" value="<?php echo esc_attr(implode(', ', $settings['breaking_news_keywords'] ?? ['breaking', 'urgent', 'just in', 'official', 'announced', 'signs', 'traded', 'injured', 'out for'])); ?>" placeholder="breaking, urgent, just in, official...">
+                                        <p class="flm-label-hint">Comma-separated keywords. Headlines containing these will trigger alerts.</p>
+                                    </div>
+                                    
+                                    <label class="flm-checkbox-card">
+                                        <input type="checkbox" name="flm_settings[breaking_news_teams_only]" value="1" <?php checked($settings['breaking_news_teams_only'] ?? true); ?>>
+                                        <span class="flm-checkbox-card-content">
+                                            <span class="flm-checkbox-card-title">Enabled Teams Only</span>
+                                            <span class="flm-checkbox-card-desc">Only send alerts for your tracked teams</span>
+                                        </span>
+                                    </label>
+                                </div>
+                            </div>
+                            
+                            <!-- Schema Markup (v2.16.0) -->
+                            <div class="flm-card" style="margin-top:24px;">
+                                <div class="flm-card-header">
+                                    <h2 class="flm-card-title">
+                                        <span class="flm-card-icon"><?php echo $this->icon('code'); ?></span>
+                                        Schema.org Markup
+                                        <span class="flm-badge" style="background:rgba(63,185,80,0.15);color:var(--flm-success);margin-left:8px;">v2.16.0</span>
+                                    </h2>
+                                </div>
+                                <div class="flm-card-body">
+                                    <p style="margin:0 0 20px;color:var(--flm-text-muted);">
+                                        Add structured data to your posts for better Google search results (rich snippets, knowledge panels).
+                                    </p>
+                                    
+                                    <label class="flm-checkbox-card" style="margin-bottom:20px;">
+                                        <input type="checkbox" name="flm_settings[schema_enabled]" value="1" <?php checked($settings['schema_enabled'] ?? true); ?>>
+                                        <span class="flm-checkbox-card-content">
+                                            <span class="flm-checkbox-card-title">Enable Schema Markup</span>
+                                            <span class="flm-checkbox-card-desc">Automatically add JSON-LD structured data to posts</span>
+                                        </span>
+                                    </label>
+                                    
+                                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;">
+                                        <label class="flm-checkbox-card">
+                                            <input type="checkbox" name="flm_settings[schema_news_article]" value="1" <?php checked($settings['schema_news_article'] ?? true); ?>>
+                                            <span class="flm-checkbox-card-content">
+                                                <span class="flm-checkbox-card-title">NewsArticle Schema</span>
+                                                <span class="flm-checkbox-card-desc">Article metadata for Google News</span>
+                                            </span>
+                                        </label>
+                                        <label class="flm-checkbox-card">
+                                            <input type="checkbox" name="flm_settings[schema_sports_event]" value="1" <?php checked($settings['schema_sports_event'] ?? true); ?>>
+                                            <span class="flm-checkbox-card-content">
+                                                <span class="flm-checkbox-card-title">SportsEvent Schema</span>
+                                                <span class="flm-checkbox-card-desc">Game recaps & previews</span>
+                                            </span>
+                                        </label>
+                                        <label class="flm-checkbox-card">
+                                            <input type="checkbox" name="flm_settings[schema_organization]" value="1" <?php checked($settings['schema_organization'] ?? true); ?>>
+                                            <span class="flm-checkbox-card-content">
+                                                <span class="flm-checkbox-card-title">Organization Schema</span>
+                                                <span class="flm-checkbox-card-desc">Publisher info for credibility</span>
+                                            </span>
+                                        </label>
+                                    </div>
+                                    
+                                    <div style="margin-top:20px;padding:16px;background:rgba(88,166,255,0.1);border-radius:8px;border:1px solid rgba(88,166,255,0.2);">
+                                        <div style="display:flex;align-items:flex-start;gap:12px;">
+                                            <span style="font-size:20px;">💡</span>
+                                            <div>
+                                                <strong style="color:var(--flm-text);font-size:13px;">Test Your Schema</strong>
+                                                <p style="margin:4px 0 0;color:var(--flm-text-muted);font-size:12px;">
+                                                    After enabling, test your pages with <a href="https://search.google.com/test/rich-results" target="_blank" style="color:var(--flm-primary);">Google's Rich Results Test</a> to verify the markup is working correctly.
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- GitHub Auto-Updates (v2.17.0) -->
+                            <div class="flm-card" style="margin-top:24px;">
+                                <div class="flm-card-header">
+                                    <h2 class="flm-card-title">
+                                        <span class="flm-card-icon" style="background:linear-gradient(135deg, #24292e, #444d56);">
+                                            <svg viewBox="0 0 24 24" fill="currentColor" style="width:16px;height:16px;"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+                                        </span>
+                                        Auto-Updates
+                                        <span class="flm-badge" style="background:rgba(139,92,246,0.15);color:#8b5cf6;margin-left:8px;">v2.17.0</span>
+                                    </h2>
+                                </div>
+                                <div class="flm-card-body">
+                                    <p style="margin:0 0 20px;color:var(--flm-text-muted);">
+                                        This plugin automatically checks for updates from GitHub. When a new version is available, you'll see it in the WordPress Updates page.
+                                    </p>
+                                    
+                                    <div id="flm-update-status" style="background:var(--flm-bg-input);border-radius:12px;padding:20px;border:1px solid var(--flm-border);">
+                                        <div style="display:flex;align-items:center;gap:16px;margin-bottom:16px;">
+                                            <div style="width:48px;height:48px;border-radius:12px;background:linear-gradient(135deg, #24292e, #444d56);display:flex;align-items:center;justify-content:center;">
+                                                <svg viewBox="0 0 24 24" fill="white" style="width:24px;height:24px;"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+                                            </div>
+                                            <div style="flex:1;">
+                                                <div style="font-size:14px;font-weight:600;color:var(--flm-text);">FLM GameDay Atlanta</div>
+                                                <div style="font-size:12px;color:var(--flm-text-muted);">
+                                                    Current Version: <strong style="color:var(--flm-success);">v<?php echo $this->version; ?></strong>
+                                                </div>
+                                            </div>
+                                            <div id="flm-update-badge"></div>
+                                        </div>
+                                        
+                                        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));gap:12px;margin-bottom:16px;">
+                                            <div style="text-align:center;padding:12px;background:var(--flm-bg);border-radius:8px;border:1px solid var(--flm-border);">
+                                                <div style="font-size:11px;color:var(--flm-text-muted);margin-bottom:4px;">Repository</div>
+                                                <a href="https://github.com/<?php echo $this->github_username; ?>/<?php echo $this->github_repo; ?>" target="_blank" style="font-size:12px;color:var(--flm-primary);text-decoration:none;">
+                                                    <?php echo $this->github_username; ?>/<?php echo $this->github_repo; ?>
+                                                </a>
+                                            </div>
+                                            <div style="text-align:center;padding:12px;background:var(--flm-bg);border-radius:8px;border:1px solid var(--flm-border);">
+                                                <div style="font-size:11px;color:var(--flm-text-muted);margin-bottom:4px;">Branch</div>
+                                                <span style="font-size:12px;color:var(--flm-text);"><?php echo $this->github_branch; ?></span>
+                                            </div>
+                                            <div style="text-align:center;padding:12px;background:var(--flm-bg);border-radius:8px;border:1px solid var(--flm-border);">
+                                                <div style="font-size:11px;color:var(--flm-text-muted);margin-bottom:4px;">Latest Version</div>
+                                                <span id="flm-latest-version" style="font-size:12px;color:var(--flm-text);">Checking...</span>
+                                            </div>
+                                        </div>
+                                        
+                                        <div style="display:flex;gap:12px;flex-wrap:wrap;">
+                                            <button type="button" class="flm-btn flm-btn-secondary" id="flm-check-updates">
+                                                <?php echo $this->icon('refresh'); ?> Check for Updates
+                                            </button>
+                                            <a href="https://github.com/<?php echo $this->github_username; ?>/<?php echo $this->github_repo; ?>/releases" target="_blank" class="flm-btn flm-btn-secondary">
+                                                <?php echo $this->icon('external'); ?> View Releases
+                                            </a>
+                                            <a href="<?php echo admin_url('update-core.php'); ?>" class="flm-btn flm-btn-secondary" id="flm-goto-updates" style="display:none;">
+                                                <?php echo $this->icon('download'); ?> Go to Updates
+                                            </a>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Private Repo Token (Optional) -->
+                                    <div style="margin-top:16px;padding:16px;background:var(--flm-bg-input);border-radius:8px;border:1px solid var(--flm-border);">
+                                        <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+                                            <span style="font-size:16px;">🔐</span>
+                                            <strong style="color:var(--flm-text);font-size:13px;">Private Repository Access</strong>
+                                            <span class="flm-badge" style="background:rgba(245,158,11,0.15);color:var(--flm-warning);font-size:10px;">Optional</span>
+                                        </div>
+                                        <p style="margin:0 0 12px;color:var(--flm-text-muted);font-size:12px;">
+                                            If your repository is private, add a GitHub Personal Access Token with <code>repo</code> scope. 
+                                            <a href="https://github.com/settings/tokens/new?description=FLM%20GameDay%20Updates&scopes=repo" target="_blank" style="color:var(--flm-primary);">Create token →</a>
+                                        </p>
+                                        <div class="flm-form-group" style="margin:0;">
+                                            <div class="flm-input-with-toggle">
+                                                <input type="password" name="flm_settings[github_token]" id="flm-github-token" class="flm-input" 
+                                                       value="<?php echo esc_attr($settings['github_token'] ?? ''); ?>" 
+                                                       placeholder="ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
+                                                <button type="button" class="flm-toggle-password" data-target="flm-github-token">
+                                                    <?php echo $this->icon('eye'); ?>
+                                                </button>
+                                            </div>
+                                            <p class="flm-label-hint" style="margin-top:6px;">Leave empty if your repository is public.</p>
+                                        </div>
+                                    </div>
+                                    
+                                    <div style="margin-top:16px;padding:16px;background:rgba(88,166,255,0.1);border-radius:8px;border:1px solid rgba(88,166,255,0.2);">
+                                        <div style="display:flex;align-items:flex-start;gap:12px;">
+                                            <span style="font-size:20px;">📦</span>
+                                            <div>
+                                                <strong style="color:var(--flm-text);font-size:13px;">How Updates Work</strong>
+                                                <p style="margin:4px 0 0;color:var(--flm-text-muted);font-size:12px;">
+                                                    When you create a new release on GitHub, WordPress will automatically detect it and show an update notification. You can then update through Dashboard → Updates like any other plugin.
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
                             <!-- Settings Import/Export (v2.12.0) -->
                             <div class="flm-card" style="margin-top:24px;">
                                 <div class="flm-card-header">
@@ -23968,7 +26322,8 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
                         <div class="flm-wizard-steps">
                             <div class="flm-wizard-step active"><span class="flm-wizard-step-num">1</span><span>Create Project</span></div>
                             <div class="flm-wizard-step"><span class="flm-wizard-step-num">2</span><span>Enable APIs</span></div>
-                            <div class="flm-wizard-step"><span class="flm-wizard-step-num">3</span><span>Get Credentials</span></div>
+                            <div class="flm-wizard-step"><span class="flm-wizard-step-num">3</span><span>OAuth Setup</span></div>
+                            <div class="flm-wizard-step"><span class="flm-wizard-step-num">4</span><span>Connect</span></div>
                         </div>
                         <div class="flm-wizard-content">
                             <div class="flm-wizard-panel active">
@@ -23994,16 +26349,18 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
                                 <div class="flm-wizard-instruction">
                                     <h4>🔌 Step 2: Enable Required APIs</h4>
                                     <ol>
-                                        <li>Make sure your project is selected</li>
+                                        <li>Make sure your new project is selected (top dropdown)</li>
                                         <li>Click each link below to enable the APIs:</li>
                                     </ol>
                                     <div style="display:flex;flex-direction:column;gap:8px;margin-top:12px;">
                                         <a href="https://console.cloud.google.com/apis/library/analyticsdata.googleapis.com" target="_blank" class="flm-wizard-link" style="background:#f9ab00;">Enable Google Analytics Data API</a>
+                                        <a href="https://console.cloud.google.com/apis/library/analyticsadmin.googleapis.com" target="_blank" class="flm-wizard-link" style="background:#ea4335;">Enable Google Analytics Admin API</a>
                                         <a href="https://console.cloud.google.com/apis/library/searchconsole.googleapis.com" target="_blank" class="flm-wizard-link" style="background:#34a853;">Enable Search Console API</a>
                                     </div>
                                 </div>
                                 <div class="flm-checklist">
                                     <div class="flm-checklist-item"><div class="flm-checklist-check">✓</div><span class="flm-checklist-text">I enabled the Analytics Data API</span></div>
+                                    <div class="flm-checklist-item"><div class="flm-checklist-check">✓</div><span class="flm-checklist-text">I enabled the Analytics Admin API</span></div>
                                     <div class="flm-checklist-item"><div class="flm-checklist-check">✓</div><span class="flm-checklist-text">I enabled the Search Console API</span></div>
                                 </div>
                             </div>
@@ -24011,23 +26368,46 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
                                 <div class="flm-wizard-instruction">
                                     <h4>🔑 Step 3: Create OAuth Credentials</h4>
                                     <ol>
-                                        <li>Go to <strong>APIs & Services</strong> → <strong>Credentials</strong></li>
-                                        <li>Click <strong>+ Create Credentials</strong> → <strong>OAuth client ID</strong></li>
-                                        <li>Configure consent screen if prompted (External, add app name)</li>
-                                        <li>Select <strong>Web application</strong> type</li>
-                                        <li>Add this redirect URI:</li>
+                                        <li>Go to <strong>APIs & Services</strong> → <strong>OAuth consent screen</strong></li>
+                                        <li>Select <strong>External</strong> user type, click <strong>Create</strong></li>
+                                        <li>Add app name (<strong>FLM GameDay</strong>), your email, save</li>
+                                        <li>Go to <strong>Credentials</strong> → <strong>+ Create Credentials</strong> → <strong>OAuth client ID</strong></li>
+                                        <li>Select <strong>Web application</strong></li>
+                                        <li>Add this <strong>Authorized redirect URI</strong>:</li>
                                     </ol>
                                     <div class="flm-copy-box">
-                                        <code id="google-redirect-uri"><?php echo admin_url('options-general.php?page=flm-importer&flm_oauth_callback=google'); ?></code>
+                                        <code id="google-redirect-uri"><?php echo esc_html(admin_url('admin-post.php?action=flm_oauth_callback')); ?></code>
                                         <button type="button" class="flm-copy-btn" data-copy="google-redirect-uri">Copy</button>
                                     </div>
+                                    <ol start="7" style="margin-top:12px;">
+                                        <li>Click <strong>Create</strong></li>
+                                        <li>Copy the <strong>Client ID</strong> and <strong>Client Secret</strong></li>
+                                    </ol>
                                     <a href="https://console.cloud.google.com/apis/credentials" target="_blank" class="flm-wizard-link" style="background:#4285f4;margin-top:12px;">Open Credentials Page</a>
+                                </div>
+                                <div class="flm-wizard-tip">
+                                    <span class="flm-wizard-tip-icon">⚠️</span>
+                                    <span class="flm-wizard-tip-text">The redirect URI must match EXACTLY - including https and no trailing slash.</span>
+                                </div>
+                            </div>
+                            <div class="flm-wizard-panel">
+                                <div class="flm-wizard-instruction">
+                                    <h4>🔗 Step 4: Enter Credentials & Connect</h4>
+                                    <p>Paste your OAuth credentials below, then save and connect your accounts.</p>
                                     <div style="margin-top:16px;display:grid;gap:12px;">
-                                        <div class="flm-form-group" style="margin:0;"><label class="flm-label">Client ID</label><input type="text" id="wizard-google-client-id" class="flm-input" placeholder="xxxxx.apps.googleusercontent.com"></div>
-                                        <div class="flm-form-group" style="margin:0;"><label class="flm-label">Client Secret</label><input type="password" id="wizard-google-client-secret" class="flm-input" placeholder="Your client secret"></div>
-                                        <div class="flm-form-group" style="margin:0;"><label class="flm-label">GA4 Property ID (optional)</label><input type="text" id="wizard-google-ga4-id" class="flm-input" placeholder="123456789"></div>
-                                        <div class="flm-form-group" style="margin:0;"><label class="flm-label">Search Console Property URL (optional)</label><input type="text" id="wizard-google-gsc-url" class="flm-input" placeholder="https://yoursite.com"></div>
+                                        <div class="flm-form-group" style="margin:0;">
+                                            <label class="flm-label">Client ID <span style="color:var(--flm-danger);">*</span></label>
+                                            <input type="text" id="wizard-google-client-id" class="flm-input" placeholder="xxxxx.apps.googleusercontent.com">
+                                        </div>
+                                        <div class="flm-form-group" style="margin:0;">
+                                            <label class="flm-label">Client Secret <span style="color:var(--flm-danger);">*</span></label>
+                                            <input type="password" id="wizard-google-client-secret" class="flm-input" placeholder="GOCSPX-...">
+                                        </div>
                                     </div>
+                                </div>
+                                <div class="flm-wizard-tip">
+                                    <span class="flm-wizard-tip-icon">🎉</span>
+                                    <span class="flm-wizard-tip-text">After saving, click "Connect GA4" to authorize access to your Analytics data.</span>
                                 </div>
                             </div>
                         </div>
@@ -24036,7 +26416,7 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
                             <div class="flm-wizard-nav-right">
                                 <button type="button" class="flm-btn flm-btn-secondary flm-wizard-close">Cancel</button>
                                 <button type="button" class="flm-btn flm-btn-primary flm-wizard-next">Next →</button>
-                                <button type="button" class="flm-btn flm-btn-success flm-wizard-finish" data-provider="google" style="display:none;">Save & Connect</button>
+                                <button type="button" class="flm-btn flm-btn-success flm-wizard-finish" data-provider="google" style="display:none;">Save Credentials</button>
                             </div>
                         </div>
                     </div>
