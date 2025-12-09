@@ -3,7 +3,7 @@
  * Plugin Name: FLM GameDay Atlanta
  * Plugin URI: https://github.com/mainlinemedia/flm-gameday-atlanta
  * Description: Import Braves, Hawks, Falcons, UGA & GT content from Field Level Media with AI enhancement, social posting, and analytics.
- * Version: 2.17.0
+ * Version: 2.18.0
  * Author: Austin / Mainline Media Group
  * Author URI: https://mainlinemediagroup.com
  * License: Proprietary
@@ -19,7 +19,7 @@ if (!defined('ABSPATH')) exit;
 class FLM_GameDay_Atlanta {
     
     private $api_base = 'https://api.fieldlevelmedia.com/v1';
-    private $version = '2.17.0';
+    private $version = '2.18.0';
     
     // GitHub Update Configuration
     private $github_username = 'mainlinemedia';
@@ -77,14 +77,29 @@ class FLM_GameDay_Atlanta {
         'ga4_api_secret' => '',
         'ga4_service_account' => '',  // v2.11.0: Service account JSON for Data API
         'claude_api_key' => '',
+        // Twitter/X OAuth 2.0 (v2.18.0)
+        'twitter_client_id' => '',
+        'twitter_client_secret' => '',
+        'twitter_oauth2_access_token' => '',
+        'twitter_oauth2_refresh_token' => '',
+        'twitter_oauth2_expires_at' => 0,
+        'twitter_user_id' => '',
+        'twitter_username' => '',
+        // Legacy Twitter OAuth 1.0a (deprecated)
         'twitter_api_key' => '',
         'twitter_api_secret' => '',
         'twitter_access_token' => '',
         'twitter_access_secret' => '',
+        // Facebook/Instagram (v2.18.0)
         'facebook_app_id' => '',
         'facebook_app_secret' => '',
         'facebook_page_id' => '',
         'facebook_access_token' => '',
+        'facebook_page_access_token' => '',
+        'facebook_page_name' => '',
+        'instagram_business_id' => '',
+        'instagram_username' => '',
+        'instagram_connected' => false,
         // Search Engine Integrations (v2.8.0)
         'gsc_property_url' => '',
         'gsc_client_id' => '',
@@ -102,8 +117,10 @@ class FLM_GameDay_Atlanta {
         // Auto-Posting Settings (v2.9.0)
         'auto_post_twitter' => false,
         'auto_post_facebook' => false,
+        'auto_post_instagram' => false,  // v2.18.0
         'twitter_post_template' => '📰 {headline} #Atlanta #Sports {team_hashtag}',
         'facebook_post_template' => '{headline}\n\nRead more: {url}',
+        'instagram_post_template' => "📰 {headline}\n\n{team_hashtag}\n\n🔗 Link in bio",  // v2.18.0
         'social_post_delay' => 0,  // Seconds to wait before posting (0 = immediate)
         'social_include_image' => true,  // Include featured image in social posts
         'social_queue_enabled' => false,  // Queue posts instead of immediate posting
@@ -401,6 +418,17 @@ class FLM_GameDay_Atlanta {
         add_action('wp_ajax_flm_get_realtime_stats', [$this, 'ajax_get_realtime_stats']);
         add_action('wp_ajax_flm_enhanced_preview', [$this, 'ajax_enhanced_preview']);
         add_action('wp_ajax_flm_check_updates', [$this, 'ajax_check_updates']);
+        
+        // Twitter OAuth 2.0 & Instagram (v2.18.0)
+        add_action('wp_ajax_flm_twitter_oauth_init', [$this, 'ajax_twitter_oauth_init']);
+        add_action('wp_ajax_flm_twitter_oauth_callback', [$this, 'ajax_twitter_oauth_callback']);
+        add_action('wp_ajax_flm_twitter_disconnect', [$this, 'ajax_twitter_disconnect']);
+        add_action('wp_ajax_flm_twitter_test_post', [$this, 'ajax_twitter_test_post']);
+        add_action('wp_ajax_flm_instagram_oauth_init', [$this, 'ajax_instagram_oauth_init']);
+        add_action('wp_ajax_flm_instagram_oauth_callback', [$this, 'ajax_instagram_oauth_callback']);
+        add_action('wp_ajax_flm_instagram_disconnect', [$this, 'ajax_instagram_disconnect']);
+        add_action('wp_ajax_flm_instagram_test_post', [$this, 'ajax_instagram_test_post']);
+        add_action('wp_ajax_flm_get_social_stats', [$this, 'ajax_get_social_stats']);
     }
     
     /**
@@ -13089,6 +13117,32 @@ class FLM_GameDay_Atlanta {
             this.bindEvents();
             this.checkIntegrations();
             this.autoLoadData();
+            this.handleOAuthCallbacks();
+        },
+        
+        // v2.18.0: Handle OAuth callback messages
+        handleOAuthCallbacks: function() {
+            const urlParams = new URLSearchParams(window.location.search);
+            
+            // Twitter
+            if (urlParams.get("twitter_connected") === "1") {
+                Toast.show("success", "Twitter Connected!", "You can now auto-post to Twitter/X");
+                window.history.replaceState({}, document.title, window.location.pathname + "?page=flm-importer");
+            }
+            if (urlParams.get("twitter_error")) {
+                Toast.show("error", "Twitter Error", decodeURIComponent(urlParams.get("twitter_error")));
+                window.history.replaceState({}, document.title, window.location.pathname + "?page=flm-importer");
+            }
+            
+            // Instagram
+            if (urlParams.get("instagram_connected") === "1") {
+                Toast.show("success", "Instagram Connected!", "You can now auto-post to Instagram");
+                window.history.replaceState({}, document.title, window.location.pathname + "?page=flm-importer");
+            }
+            if (urlParams.get("instagram_error")) {
+                Toast.show("error", "Instagram Error", decodeURIComponent(urlParams.get("instagram_error")));
+                window.history.replaceState({}, document.title, window.location.pathname + "?page=flm-importer");
+            }
         },
         
         bindEvents: function() {
@@ -13134,6 +13188,14 @@ class FLM_GameDay_Atlanta {
             
             // GitHub Updates (v2.17.0)
             $(document).on("click", "#flm-check-updates", this.checkGitHubUpdates);
+            
+            // v2.18.0: Twitter OAuth 2.0 & Instagram
+            $(document).on("click", "#flm-twitter-connect", this.twitterConnect);
+            $(document).on("click", "#flm-twitter-disconnect", this.twitterDisconnect);
+            $(document).on("click", "#flm-twitter-test", this.twitterTest);
+            $(document).on("click", "#flm-instagram-connect", this.instagramConnect);
+            $(document).on("click", "#flm-instagram-disconnect", this.instagramDisconnect);
+            $(document).on("click", "#flm-instagram-test", this.instagramTest);
             
             // ESP Integration (v2.13.0)
             $(document).on("change", "input[name=\'flm_settings[esp_provider]\']", this.toggleEspSettings);
@@ -13854,6 +13916,186 @@ class FLM_GameDay_Atlanta {
             } else if (provider === "aigeon") {
                 $("#flm-aigeon-settings").slideDown(200);
             }
+        },
+        
+        // v2.18.0: Twitter OAuth 2.0
+        twitterConnect: function() {
+            const $btn = $(this);
+            $btn.prop("disabled", true).html(
+                "<svg class=\"flm-spinner\" viewBox=\"0 0 24 24\"><circle cx=\"12\" cy=\"12\" r=\"10\" stroke=\"currentColor\" stroke-width=\"2\" fill=\"none\" stroke-dasharray=\"31.4\" stroke-dashoffset=\"10\"/></svg>" +
+                " Connecting..."
+            );
+            
+            $.ajax({
+                url: flmAdmin.ajaxUrl,
+                type: "POST",
+                data: {
+                    action: "flm_twitter_oauth_init",
+                    nonce: flmAdmin.nonce
+                },
+                success: function(response) {
+                    if (response.success) {
+                        window.location.href = response.data.auth_url;
+                    } else {
+                        Toast.show("error", "Connection Failed", response.data || "Could not start OAuth flow");
+                        $btn.prop("disabled", false).html("Connect Twitter/X");
+                    }
+                },
+                error: function() {
+                    Toast.show("error", "Connection Failed", "Network error");
+                    $btn.prop("disabled", false).html("Connect Twitter/X");
+                }
+            });
+        },
+        
+        twitterDisconnect: function() {
+            if (!confirm("Disconnect Twitter? You will need to reconnect to post.")) return;
+            
+            const $btn = $(this);
+            $btn.prop("disabled", true).text("Disconnecting...");
+            
+            $.ajax({
+                url: flmAdmin.ajaxUrl,
+                type: "POST",
+                data: {
+                    action: "flm_twitter_disconnect",
+                    nonce: flmAdmin.nonce
+                },
+                success: function(response) {
+                    if (response.success) {
+                        Toast.show("success", "Disconnected", "Twitter has been disconnected");
+                        setTimeout(function() { location.reload(); }, 1000);
+                    } else {
+                        Toast.show("error", "Error", response.data || "Could not disconnect");
+                    }
+                },
+                complete: function() {
+                    $btn.prop("disabled", false).text("Disconnect");
+                }
+            });
+        },
+        
+        twitterTest: function() {
+            const $btn = $(this);
+            $btn.prop("disabled", true).html(
+                "<svg class=\"flm-spinner\" viewBox=\"0 0 24 24\"><circle cx=\"12\" cy=\"12\" r=\"10\" stroke=\"currentColor\" stroke-width=\"2\" fill=\"none\" stroke-dasharray=\"31.4\" stroke-dashoffset=\"10\"/></svg>" +
+                " Posting..."
+            );
+            
+            $.ajax({
+                url: flmAdmin.ajaxUrl,
+                type: "POST",
+                data: {
+                    action: "flm_twitter_test_post",
+                    nonce: flmAdmin.nonce
+                },
+                success: function(response) {
+                    if (response.success) {
+                        Toast.show("success", "Tweet Posted!", response.data.message);
+                    } else {
+                        Toast.show("error", "Post Failed", response.data || "Could not post tweet");
+                    }
+                },
+                error: function() {
+                    Toast.show("error", "Post Failed", "Network error");
+                },
+                complete: function() {
+                    $btn.prop("disabled", false).html(
+                        "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" style=\"width:14px;height:14px;\"><path d=\"M13 2L3 14h9l-1 8 10-12h-9l1-8z\"/></svg>" +
+                        " Test Post"
+                    );
+                }
+            });
+        },
+        
+        // v2.18.0: Instagram OAuth
+        instagramConnect: function() {
+            const $btn = $(this);
+            $btn.prop("disabled", true).html(
+                "<svg class=\"flm-spinner\" viewBox=\"0 0 24 24\"><circle cx=\"12\" cy=\"12\" r=\"10\" stroke=\"currentColor\" stroke-width=\"2\" fill=\"none\" stroke-dasharray=\"31.4\" stroke-dashoffset=\"10\"/></svg>" +
+                " Connecting..."
+            );
+            
+            $.ajax({
+                url: flmAdmin.ajaxUrl,
+                type: "POST",
+                data: {
+                    action: "flm_instagram_oauth_init",
+                    nonce: flmAdmin.nonce
+                },
+                success: function(response) {
+                    if (response.success) {
+                        window.location.href = response.data.auth_url;
+                    } else {
+                        Toast.show("error", "Connection Failed", response.data || "Could not start OAuth flow");
+                        $btn.prop("disabled", false).html("Connect Instagram");
+                    }
+                },
+                error: function() {
+                    Toast.show("error", "Connection Failed", "Network error");
+                    $btn.prop("disabled", false).html("Connect Instagram");
+                }
+            });
+        },
+        
+        instagramDisconnect: function() {
+            if (!confirm("Disconnect Instagram? You will need to reconnect to post.")) return;
+            
+            const $btn = $(this);
+            $btn.prop("disabled", true).text("Disconnecting...");
+            
+            $.ajax({
+                url: flmAdmin.ajaxUrl,
+                type: "POST",
+                data: {
+                    action: "flm_instagram_disconnect",
+                    nonce: flmAdmin.nonce
+                },
+                success: function(response) {
+                    if (response.success) {
+                        Toast.show("success", "Disconnected", "Instagram has been disconnected");
+                        setTimeout(function() { location.reload(); }, 1000);
+                    } else {
+                        Toast.show("error", "Error", response.data || "Could not disconnect");
+                    }
+                },
+                complete: function() {
+                    $btn.prop("disabled", false).text("Disconnect");
+                }
+            });
+        },
+        
+        instagramTest: function() {
+            const $btn = $(this);
+            $btn.prop("disabled", true).html(
+                "<svg class=\"flm-spinner\" viewBox=\"0 0 24 24\"><circle cx=\"12\" cy=\"12\" r=\"10\" stroke=\"currentColor\" stroke-width=\"2\" fill=\"none\" stroke-dasharray=\"31.4\" stroke-dashoffset=\"10\"/></svg>" +
+                " Posting..."
+            );
+            
+            $.ajax({
+                url: flmAdmin.ajaxUrl,
+                type: "POST",
+                data: {
+                    action: "flm_instagram_test_post",
+                    nonce: flmAdmin.nonce
+                },
+                success: function(response) {
+                    if (response.success) {
+                        Toast.show("success", "Posted to Instagram!", response.data.message);
+                    } else {
+                        Toast.show("error", "Post Failed", response.data || "Could not post to Instagram");
+                    }
+                },
+                error: function() {
+                    Toast.show("error", "Post Failed", "Network error");
+                },
+                complete: function() {
+                    $btn.prop("disabled", false).html(
+                        "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" style=\"width:14px;height:14px;\"><path d=\"M13 2L3 14h9l-1 8 10-12h-9l1-8z\"/></svg>" +
+                        " Test Post"
+                    );
+                }
+            });
         },
         
         // v2.16.0: Test notification
@@ -14926,7 +15168,7 @@ class FLM_GameDay_Atlanta {
         $settings = $this->get_settings();
         
         // Check if any auto-posting is enabled
-        if (empty($settings['auto_post_twitter']) && empty($settings['auto_post_facebook'])) {
+        if (empty($settings['auto_post_twitter']) && empty($settings['auto_post_facebook']) && empty($settings['auto_post_instagram'])) {
             return;
         }
         
@@ -14973,9 +15215,14 @@ class FLM_GameDay_Atlanta {
         $settings = $this->get_settings();
         $results = [];
         
-        // Twitter/X
+        // Twitter/X (using OAuth 2.0)
         if (!empty($settings['auto_post_twitter'])) {
-            $result = $this->post_to_twitter($post_id, $headline, $post_url, $team_key, $image_url);
+            // Use OAuth 2.0 if connected, fall back to OAuth 1.0a
+            if (!empty($settings['twitter_oauth2_access_token'])) {
+                $result = $this->post_to_twitter_v2($post_id, $headline, $post_url, $team_key, $image_url);
+            } else {
+                $result = $this->post_to_twitter($post_id, $headline, $post_url, $team_key, $image_url);
+            }
             $results['twitter'] = $result;
             $this->log_social_activity('twitter', $post_id, $result);
         }
@@ -14987,11 +15234,59 @@ class FLM_GameDay_Atlanta {
             $this->log_social_activity('facebook', $post_id, $result);
         }
         
+        // Instagram (v2.18.0)
+        if (!empty($settings['auto_post_instagram']) && !empty($image_url)) {
+            $caption = $this->build_instagram_caption($headline, $team_key, $post_url);
+            $result = $this->post_to_instagram($post_id, $caption, $image_url);
+            $results['instagram'] = $result;
+            $this->log_social_activity('instagram', $post_id, $result);
+        }
+        
         // Store results in post meta
         update_post_meta($post_id, '_flm_social_posted', $results);
         update_post_meta($post_id, '_flm_social_posted_at', current_time('mysql'));
         
         return $results;
+    }
+    
+    /**
+     * Build Instagram caption from headline
+     */
+    private function build_instagram_caption($headline, $team_key, $post_url) {
+        $settings = $this->get_settings();
+        $template = $settings['instagram_post_template'] ?? "📰 {headline}\n\n{team_hashtag}\n\n🔗 Link in bio";
+        $team_config = $this->target_teams[$team_key] ?? [];
+        
+        $team_hashtags = [
+            'braves' => '#Braves #ForTheA #ChopOn #AtlantaBraves #MLB',
+            'falcons' => '#Falcons #RiseUp #DirtyBirds #AtlantaFalcons #NFL',
+            'hawks' => '#Hawks #TrueToAtlanta #AtlantaHawks #NBA',
+            'united' => '#ATLUTD #UniteAndConquer #AtlantaUnited #MLS',
+            'dream' => '#AtlantaDream #DreamOn #WNBA',
+            'uga' => '#UGA #GoDawgs #Dawgs #Georgia #SEC',
+            'gt' => '#GaTech #TogetherWeSwarm #YellowJackets #ACC',
+        ];
+        
+        $caption = str_replace([
+            '{headline}',
+            '{team}',
+            '{team_hashtag}',
+            '{league}',
+            '{url}',
+        ], [
+            $headline,
+            $team_config['name'] ?? '',
+            $team_hashtags[$team_key] ?? '#Atlanta #Sports',
+            $team_config['league'] ?? '',
+            $post_url,
+        ], $template);
+        
+        // Instagram caption limit is 2200 chars
+        if (strlen($caption) > 2200) {
+            $caption = substr($caption, 0, 2197) . '...';
+        }
+        
+        return $caption;
     }
     
     /**
@@ -17357,14 +17652,33 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
         $settings['ga4_property_id'] = isset($post_data['ga4_property_id']) ? sanitize_text_field($post_data['ga4_property_id']) : ($old_settings['ga4_property_id'] ?? '');
         $settings['ga4_api_secret'] = isset($post_data['ga4_api_secret']) ? sanitize_text_field($post_data['ga4_api_secret']) : ($old_settings['ga4_api_secret'] ?? '');
         $settings['claude_api_key'] = isset($post_data['claude_api_key']) ? sanitize_text_field($post_data['claude_api_key']) : ($old_settings['claude_api_key'] ?? '');
+        
+        // Twitter OAuth 2.0 (v2.18.0) - Client credentials saved via form, tokens via OAuth
+        $settings['twitter_client_id'] = isset($post_data['twitter_client_id']) ? sanitize_text_field($post_data['twitter_client_id']) : ($old_settings['twitter_client_id'] ?? '');
+        $settings['twitter_client_secret'] = isset($post_data['twitter_client_secret']) ? sanitize_text_field($post_data['twitter_client_secret']) : ($old_settings['twitter_client_secret'] ?? '');
+        // Preserve OAuth 2.0 tokens (set via AJAX handlers)
+        $settings['twitter_oauth2_access_token'] = $old_settings['twitter_oauth2_access_token'] ?? '';
+        $settings['twitter_oauth2_refresh_token'] = $old_settings['twitter_oauth2_refresh_token'] ?? '';
+        $settings['twitter_oauth2_expires_at'] = $old_settings['twitter_oauth2_expires_at'] ?? 0;
+        $settings['twitter_username'] = $old_settings['twitter_username'] ?? '';
+        $settings['twitter_user_id'] = $old_settings['twitter_user_id'] ?? '';
+        
+        // Legacy Twitter OAuth 1.0a (deprecated but preserved)
         $settings['twitter_api_key'] = isset($post_data['twitter_api_key']) ? sanitize_text_field($post_data['twitter_api_key']) : ($old_settings['twitter_api_key'] ?? '');
         $settings['twitter_api_secret'] = isset($post_data['twitter_api_secret']) ? sanitize_text_field($post_data['twitter_api_secret']) : ($old_settings['twitter_api_secret'] ?? '');
         $settings['twitter_access_token'] = isset($post_data['twitter_access_token']) ? sanitize_text_field($post_data['twitter_access_token']) : ($old_settings['twitter_access_token'] ?? '');
         $settings['twitter_access_secret'] = isset($post_data['twitter_access_secret']) ? sanitize_text_field($post_data['twitter_access_secret']) : ($old_settings['twitter_access_secret'] ?? '');
+        
+        // Facebook/Instagram (v2.18.0) - App credentials saved via form, tokens via OAuth
         $settings['facebook_app_id'] = isset($post_data['facebook_app_id']) ? sanitize_text_field($post_data['facebook_app_id']) : ($old_settings['facebook_app_id'] ?? '');
         $settings['facebook_app_secret'] = isset($post_data['facebook_app_secret']) ? sanitize_text_field($post_data['facebook_app_secret']) : ($old_settings['facebook_app_secret'] ?? '');
-        $settings['facebook_page_id'] = isset($post_data['facebook_page_id']) ? sanitize_text_field($post_data['facebook_page_id']) : ($old_settings['facebook_page_id'] ?? '');
-        $settings['facebook_access_token'] = isset($post_data['facebook_access_token']) ? sanitize_text_field($post_data['facebook_access_token']) : ($old_settings['facebook_access_token'] ?? '');
+        $settings['facebook_page_id'] = $old_settings['facebook_page_id'] ?? '';
+        $settings['facebook_access_token'] = $old_settings['facebook_access_token'] ?? '';
+        $settings['facebook_page_access_token'] = $old_settings['facebook_page_access_token'] ?? '';
+        $settings['facebook_page_name'] = $old_settings['facebook_page_name'] ?? '';
+        $settings['instagram_business_id'] = $old_settings['instagram_business_id'] ?? '';
+        $settings['instagram_username'] = $old_settings['instagram_username'] ?? '';
+        $settings['instagram_connected'] = $old_settings['instagram_connected'] ?? false;
         
         // Search Engine Integrations (v2.8.0) - preserve if not in form
         $settings['gsc_property_url'] = isset($post_data['gsc_property_url']) ? esc_url_raw($post_data['gsc_property_url']) : ($old_settings['gsc_property_url'] ?? '');
@@ -17375,7 +17689,7 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
         $settings['bing_site_url'] = isset($post_data['bing_site_url']) ? esc_url_raw($post_data['bing_site_url']) : ($old_settings['bing_site_url'] ?? '');
         
         // ML Settings (v2.8.0) - preserve if not in form (checkboxes)
-        $integrations_form_submitted = isset($post_data['ga4_property_id']) || isset($post_data['twitter_api_key']);
+        $integrations_form_submitted = isset($post_data['ga4_property_id']) || isset($post_data['twitter_client_id']);
         if ($integrations_form_submitted) {
             $settings['ml_headline_analysis'] = !empty($post_data['ml_headline_analysis']);
             $settings['ml_publish_time_optimization'] = !empty($post_data['ml_publish_time_optimization']);
@@ -17390,21 +17704,25 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
             $settings['ml_seo_optimization'] = $old_settings['ml_seo_optimization'] ?? false;
         }
         
-        // Social Auto-Posting Settings (v2.9.0) - preserve if not in form
-        $social_form_submitted = isset($post_data['twitter_post_template']) || isset($post_data['facebook_post_template']);
+        // Social Auto-Posting Settings (v2.9.0 + v2.18.0) - preserve if not in form
+        $social_form_submitted = isset($post_data['auto_post_twitter']) || isset($post_data['auto_post_instagram']) || isset($post_data['twitter_post_template']);
         if ($social_form_submitted) {
             $settings['auto_post_twitter'] = !empty($post_data['auto_post_twitter']);
             $settings['auto_post_facebook'] = !empty($post_data['auto_post_facebook']);
+            $settings['auto_post_instagram'] = !empty($post_data['auto_post_instagram']);
             $settings['twitter_post_template'] = sanitize_textarea_field($post_data['twitter_post_template'] ?? '📰 {headline} #Atlanta #Sports {team_hashtag}');
             $settings['facebook_post_template'] = sanitize_textarea_field($post_data['facebook_post_template'] ?? "{headline}\n\nRead more: {url}");
+            $settings['instagram_post_template'] = sanitize_textarea_field($post_data['instagram_post_template'] ?? "📰 {headline}\n\n{team_hashtag}\n\n🔗 Link in bio");
             $settings['social_post_delay'] = absint($post_data['social_post_delay'] ?? 0);
             $settings['social_include_image'] = !empty($post_data['social_include_image']);
             $settings['social_queue_enabled'] = !empty($post_data['social_queue_enabled']);
         } else {
             $settings['auto_post_twitter'] = $old_settings['auto_post_twitter'] ?? false;
             $settings['auto_post_facebook'] = $old_settings['auto_post_facebook'] ?? false;
+            $settings['auto_post_instagram'] = $old_settings['auto_post_instagram'] ?? false;
             $settings['twitter_post_template'] = $old_settings['twitter_post_template'] ?? '📰 {headline} #Atlanta #Sports {team_hashtag}';
             $settings['facebook_post_template'] = $old_settings['facebook_post_template'] ?? "{headline}\n\nRead more: {url}";
+            $settings['instagram_post_template'] = $old_settings['instagram_post_template'] ?? "📰 {headline}\n\n{team_hashtag}\n\n🔗 Link in bio";
             $settings['social_post_delay'] = $old_settings['social_post_delay'] ?? 0;
             $settings['social_include_image'] = $old_settings['social_include_image'] ?? true;
             $settings['social_queue_enabled'] = $old_settings['social_queue_enabled'] ?? false;
@@ -22740,6 +23058,684 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
     }
     
     // ========================================
+    // TWITTER OAUTH 2.0 (v2.18.0)
+    // ========================================
+    
+    /**
+     * Get Twitter OAuth 2.0 redirect URI
+     */
+    private function get_twitter_redirect_uri() {
+        return admin_url('admin-ajax.php?action=flm_twitter_oauth_callback');
+    }
+    
+    /**
+     * Initialize Twitter OAuth 2.0 flow with PKCE
+     */
+    public function ajax_twitter_oauth_init() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+        
+        $settings = $this->get_settings();
+        $client_id = $settings['twitter_client_id'] ?? '';
+        
+        if (empty($client_id)) {
+            wp_send_json_error('Twitter Client ID not configured. Add it in Settings first.');
+        }
+        
+        // Generate PKCE code verifier and challenge
+        $code_verifier = $this->generate_pkce_verifier();
+        $code_challenge = $this->generate_pkce_challenge($code_verifier);
+        
+        // Generate state for CSRF protection
+        $state = wp_generate_password(32, false);
+        
+        // Store for callback verification
+        set_transient('flm_twitter_oauth_state_' . $state, [
+            'code_verifier' => $code_verifier,
+            'time' => time(),
+        ], 600); // 10 minute expiry
+        
+        // Build authorization URL
+        $auth_url = 'https://twitter.com/i/oauth2/authorize?' . http_build_query([
+            'response_type' => 'code',
+            'client_id' => $client_id,
+            'redirect_uri' => $this->get_twitter_redirect_uri(),
+            'scope' => 'tweet.read tweet.write users.read offline.access',
+            'state' => $state,
+            'code_challenge' => $code_challenge,
+            'code_challenge_method' => 'S256',
+        ]);
+        
+        wp_send_json_success(['auth_url' => $auth_url]);
+    }
+    
+    /**
+     * Handle Twitter OAuth 2.0 callback
+     */
+    public function ajax_twitter_oauth_callback() {
+        // Check for error
+        if (isset($_GET['error'])) {
+            $error = sanitize_text_field($_GET['error_description'] ?? $_GET['error']);
+            wp_redirect(admin_url('options-general.php?page=flm-importer&twitter_error=' . urlencode($error)));
+            exit;
+        }
+        
+        $code = sanitize_text_field($_GET['code'] ?? '');
+        $state = sanitize_text_field($_GET['state'] ?? '');
+        
+        if (empty($code) || empty($state)) {
+            wp_redirect(admin_url('options-general.php?page=flm-importer&twitter_error=' . urlencode('Missing authorization code')));
+            exit;
+        }
+        
+        // Verify state and get code verifier
+        $stored = get_transient('flm_twitter_oauth_state_' . $state);
+        delete_transient('flm_twitter_oauth_state_' . $state);
+        
+        if (!$stored) {
+            wp_redirect(admin_url('options-general.php?page=flm-importer&twitter_error=' . urlencode('Invalid or expired state')));
+            exit;
+        }
+        
+        $settings = $this->get_settings();
+        $client_id = $settings['twitter_client_id'] ?? '';
+        $client_secret = $settings['twitter_client_secret'] ?? '';
+        
+        // Exchange code for tokens
+        $token_response = wp_remote_post('https://api.twitter.com/2/oauth2/token', [
+            'headers' => [
+                'Content-Type' => 'application/x-www-form-urlencoded',
+                'Authorization' => 'Basic ' . base64_encode($client_id . ':' . $client_secret),
+            ],
+            'body' => [
+                'code' => $code,
+                'grant_type' => 'authorization_code',
+                'redirect_uri' => $this->get_twitter_redirect_uri(),
+                'code_verifier' => $stored['code_verifier'],
+            ],
+            'timeout' => 30,
+        ]);
+        
+        if (is_wp_error($token_response)) {
+            wp_redirect(admin_url('options-general.php?page=flm-importer&twitter_error=' . urlencode($token_response->get_error_message())));
+            exit;
+        }
+        
+        $token_data = json_decode(wp_remote_retrieve_body($token_response), true);
+        
+        if (empty($token_data['access_token'])) {
+            $error = $token_data['error_description'] ?? $token_data['error'] ?? 'Failed to get access token';
+            wp_redirect(admin_url('options-general.php?page=flm-importer&twitter_error=' . urlencode($error)));
+            exit;
+        }
+        
+        // Get user info
+        $user_response = wp_remote_get('https://api.twitter.com/2/users/me', [
+            'headers' => [
+                'Authorization' => 'Bearer ' . $token_data['access_token'],
+            ],
+        ]);
+        
+        $user_data = json_decode(wp_remote_retrieve_body($user_response), true);
+        $username = $user_data['data']['username'] ?? '';
+        $user_id = $user_data['data']['id'] ?? '';
+        
+        // Save tokens
+        $settings['twitter_oauth2_access_token'] = $token_data['access_token'];
+        $settings['twitter_oauth2_refresh_token'] = $token_data['refresh_token'] ?? '';
+        $settings['twitter_oauth2_expires_at'] = time() + ($token_data['expires_in'] ?? 7200);
+        $settings['twitter_username'] = $username;
+        $settings['twitter_user_id'] = $user_id;
+        update_option('flm_settings', $settings);
+        
+        $this->log_activity('social', "Connected Twitter/X: @{$username}");
+        
+        wp_redirect(admin_url('options-general.php?page=flm-importer&twitter_connected=1'));
+        exit;
+    }
+    
+    /**
+     * Disconnect Twitter
+     */
+    public function ajax_twitter_disconnect() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+        
+        $settings = $this->get_settings();
+        $username = $settings['twitter_username'] ?? '';
+        
+        $settings['twitter_oauth2_access_token'] = '';
+        $settings['twitter_oauth2_refresh_token'] = '';
+        $settings['twitter_oauth2_expires_at'] = 0;
+        $settings['twitter_username'] = '';
+        $settings['twitter_user_id'] = '';
+        update_option('flm_settings', $settings);
+        
+        $this->log_activity('social', "Disconnected Twitter/X" . ($username ? ": @{$username}" : ''));
+        
+        wp_send_json_success(['message' => 'Twitter disconnected']);
+    }
+    
+    /**
+     * Test Twitter post
+     */
+    public function ajax_twitter_test_post() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+        
+        $result = $this->post_to_twitter_v2(0, '🧪 Test post from FLM GameDay Atlanta! This is a test of the social posting feature. ' . current_time('H:i:s'), home_url(), 'braves', '');
+        
+        if ($result['success']) {
+            wp_send_json_success([
+                'message' => 'Test tweet posted successfully!',
+                'tweet_id' => $result['tweet_id'],
+            ]);
+        } else {
+            wp_send_json_error($result['error']);
+        }
+    }
+    
+    /**
+     * Refresh Twitter OAuth 2.0 token
+     */
+    private function refresh_twitter_token() {
+        $settings = $this->get_settings();
+        $refresh_token = $settings['twitter_oauth2_refresh_token'] ?? '';
+        
+        if (empty($refresh_token)) {
+            return false;
+        }
+        
+        $client_id = $settings['twitter_client_id'] ?? '';
+        $client_secret = $settings['twitter_client_secret'] ?? '';
+        
+        $response = wp_remote_post('https://api.twitter.com/2/oauth2/token', [
+            'headers' => [
+                'Content-Type' => 'application/x-www-form-urlencoded',
+                'Authorization' => 'Basic ' . base64_encode($client_id . ':' . $client_secret),
+            ],
+            'body' => [
+                'grant_type' => 'refresh_token',
+                'refresh_token' => $refresh_token,
+            ],
+            'timeout' => 30,
+        ]);
+        
+        if (is_wp_error($response)) {
+            return false;
+        }
+        
+        $data = json_decode(wp_remote_retrieve_body($response), true);
+        
+        if (empty($data['access_token'])) {
+            return false;
+        }
+        
+        $settings['twitter_oauth2_access_token'] = $data['access_token'];
+        $settings['twitter_oauth2_refresh_token'] = $data['refresh_token'] ?? $refresh_token;
+        $settings['twitter_oauth2_expires_at'] = time() + ($data['expires_in'] ?? 7200);
+        update_option('flm_settings', $settings);
+        
+        return $data['access_token'];
+    }
+    
+    /**
+     * Get valid Twitter access token (refresh if needed)
+     */
+    private function get_twitter_access_token() {
+        $settings = $this->get_settings();
+        $access_token = $settings['twitter_oauth2_access_token'] ?? '';
+        $expires_at = $settings['twitter_oauth2_expires_at'] ?? 0;
+        
+        if (empty($access_token)) {
+            return false;
+        }
+        
+        // Refresh if expiring within 5 minutes
+        if ($expires_at < time() + 300) {
+            $new_token = $this->refresh_twitter_token();
+            if ($new_token) {
+                return $new_token;
+            }
+        }
+        
+        return $access_token;
+    }
+    
+    /**
+     * Post to Twitter using OAuth 2.0
+     */
+    private function post_to_twitter_v2($post_id, $text, $url, $team_key, $image_url = '') {
+        $access_token = $this->get_twitter_access_token();
+        
+        if (!$access_token) {
+            return ['success' => false, 'error' => 'Twitter not connected or token expired'];
+        }
+        
+        $settings = $this->get_settings();
+        
+        // Build tweet text from template if post_id provided
+        if ($post_id > 0) {
+            $template = $settings['twitter_post_template'] ?? '📰 {headline} #Atlanta #Sports {team_hashtag}';
+            $team_config = $this->target_teams[$team_key] ?? [];
+            $tracked_url = $this->build_utm_url($url, 'twitter', $team_key);
+            
+            $team_hashtags = [
+                'braves' => '#Braves #ForTheA',
+                'falcons' => '#Falcons #RiseUp',
+                'hawks' => '#Hawks #TrueToAtlanta',
+                'united' => '#ATLUTD #UniteAndConquer',
+                'dream' => '#AtlantaDream #DreamOn',
+                'uga' => '#UGA #GoDawgs',
+                'gt' => '#GaTech #TogetherWeSwarm',
+            ];
+            
+            $tweet_text = str_replace([
+                '{headline}',
+                '{url}',
+                '{team}',
+                '{team_hashtag}',
+                '{league}',
+            ], [
+                $text,
+                $tracked_url,
+                $team_config['name'] ?? '',
+                $team_hashtags[$team_key] ?? '#Atlanta',
+                $team_config['league'] ?? '',
+            ], $template);
+            
+            // Append URL if not in template
+            if (strpos($tweet_text, 'http') === false) {
+                if (strlen($tweet_text) > 254) {
+                    $tweet_text = substr($tweet_text, 0, 251) . '...';
+                }
+                $tweet_text .= "\n\n" . $tracked_url;
+            }
+        } else {
+            $tweet_text = $text;
+        }
+        
+        // Truncate to 280 chars
+        if (strlen($tweet_text) > 280) {
+            $tweet_text = substr($tweet_text, 0, 277) . '...';
+        }
+        
+        // Post tweet
+        $response = wp_remote_post('https://api.twitter.com/2/tweets', [
+            'headers' => [
+                'Authorization' => 'Bearer ' . $access_token,
+                'Content-Type' => 'application/json',
+            ],
+            'body' => json_encode(['text' => $tweet_text]),
+            'timeout' => 30,
+        ]);
+        
+        if (is_wp_error($response)) {
+            return ['success' => false, 'error' => $response->get_error_message()];
+        }
+        
+        $code = wp_remote_retrieve_response_code($response);
+        $body = json_decode(wp_remote_retrieve_body($response), true);
+        
+        if ($code === 201 && isset($body['data']['id'])) {
+            $this->log_activity('social', "Posted to Twitter: " . substr($tweet_text, 0, 50) . '...');
+            return [
+                'success' => true,
+                'tweet_id' => $body['data']['id'],
+                'tweet_text' => $tweet_text,
+            ];
+        }
+        
+        $error = $body['detail'] ?? $body['errors'][0]['message'] ?? 'Twitter API error';
+        return ['success' => false, 'error' => $error, 'code' => $code];
+    }
+    
+    /**
+     * Generate PKCE code verifier
+     */
+    private function generate_pkce_verifier() {
+        $random = wp_generate_password(64, false);
+        return rtrim(strtr(base64_encode($random), '+/', '-_'), '=');
+    }
+    
+    /**
+     * Generate PKCE code challenge from verifier
+     */
+    private function generate_pkce_challenge($verifier) {
+        $hash = hash('sha256', $verifier, true);
+        return rtrim(strtr(base64_encode($hash), '+/', '-_'), '=');
+    }
+    
+    // ========================================
+    // INSTAGRAM INTEGRATION (v2.18.0)
+    // ========================================
+    
+    /**
+     * Get Instagram OAuth redirect URI
+     */
+    private function get_instagram_redirect_uri() {
+        return admin_url('admin-ajax.php?action=flm_instagram_oauth_callback');
+    }
+    
+    /**
+     * Initialize Instagram OAuth (via Facebook)
+     */
+    public function ajax_instagram_oauth_init() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+        
+        $settings = $this->get_settings();
+        $app_id = $settings['facebook_app_id'] ?? '';
+        
+        if (empty($app_id)) {
+            wp_send_json_error('Facebook App ID not configured. Add it in Settings first.');
+        }
+        
+        // Generate state for CSRF protection
+        $state = wp_generate_password(32, false);
+        set_transient('flm_instagram_oauth_state_' . $state, time(), 600);
+        
+        // Build authorization URL for Instagram (via Facebook)
+        $auth_url = 'https://www.facebook.com/v18.0/dialog/oauth?' . http_build_query([
+            'client_id' => $app_id,
+            'redirect_uri' => $this->get_instagram_redirect_uri(),
+            'scope' => 'instagram_basic,instagram_content_publish,pages_show_list,pages_read_engagement,business_management',
+            'response_type' => 'code',
+            'state' => $state,
+        ]);
+        
+        wp_send_json_success(['auth_url' => $auth_url]);
+    }
+    
+    /**
+     * Handle Instagram OAuth callback
+     */
+    public function ajax_instagram_oauth_callback() {
+        if (isset($_GET['error'])) {
+            $error = sanitize_text_field($_GET['error_description'] ?? $_GET['error']);
+            wp_redirect(admin_url('options-general.php?page=flm-importer&instagram_error=' . urlencode($error)));
+            exit;
+        }
+        
+        $code = sanitize_text_field($_GET['code'] ?? '');
+        $state = sanitize_text_field($_GET['state'] ?? '');
+        
+        if (empty($code) || empty($state)) {
+            wp_redirect(admin_url('options-general.php?page=flm-importer&instagram_error=' . urlencode('Missing authorization code')));
+            exit;
+        }
+        
+        // Verify state
+        $stored = get_transient('flm_instagram_oauth_state_' . $state);
+        delete_transient('flm_instagram_oauth_state_' . $state);
+        
+        if (!$stored) {
+            wp_redirect(admin_url('options-general.php?page=flm-importer&instagram_error=' . urlencode('Invalid or expired state')));
+            exit;
+        }
+        
+        $settings = $this->get_settings();
+        $app_id = $settings['facebook_app_id'] ?? '';
+        $app_secret = $settings['facebook_app_secret'] ?? '';
+        
+        // Exchange code for access token
+        $token_url = 'https://graph.facebook.com/v18.0/oauth/access_token?' . http_build_query([
+            'client_id' => $app_id,
+            'client_secret' => $app_secret,
+            'redirect_uri' => $this->get_instagram_redirect_uri(),
+            'code' => $code,
+        ]);
+        
+        $token_response = wp_remote_get($token_url, ['timeout' => 30]);
+        
+        if (is_wp_error($token_response)) {
+            wp_redirect(admin_url('options-general.php?page=flm-importer&instagram_error=' . urlencode($token_response->get_error_message())));
+            exit;
+        }
+        
+        $token_data = json_decode(wp_remote_retrieve_body($token_response), true);
+        
+        if (empty($token_data['access_token'])) {
+            $error = $token_data['error']['message'] ?? 'Failed to get access token';
+            wp_redirect(admin_url('options-general.php?page=flm-importer&instagram_error=' . urlencode($error)));
+            exit;
+        }
+        
+        $access_token = $token_data['access_token'];
+        
+        // Get long-lived token
+        $long_token_url = 'https://graph.facebook.com/v18.0/oauth/access_token?' . http_build_query([
+            'grant_type' => 'fb_exchange_token',
+            'client_id' => $app_id,
+            'client_secret' => $app_secret,
+            'fb_exchange_token' => $access_token,
+        ]);
+        
+        $long_response = wp_remote_get($long_token_url, ['timeout' => 30]);
+        $long_data = json_decode(wp_remote_retrieve_body($long_response), true);
+        
+        if (!empty($long_data['access_token'])) {
+            $access_token = $long_data['access_token'];
+        }
+        
+        // Get user's pages
+        $pages_response = wp_remote_get("https://graph.facebook.com/v18.0/me/accounts?access_token={$access_token}", ['timeout' => 30]);
+        $pages_data = json_decode(wp_remote_retrieve_body($pages_response), true);
+        
+        if (empty($pages_data['data'])) {
+            wp_redirect(admin_url('options-general.php?page=flm-importer&instagram_error=' . urlencode('No Facebook Pages found. You need a Facebook Page connected to an Instagram Business account.')));
+            exit;
+        }
+        
+        // Find Instagram Business account linked to first page
+        $instagram_id = '';
+        $instagram_username = '';
+        $page_id = '';
+        $page_name = '';
+        $page_token = '';
+        
+        foreach ($pages_data['data'] as $page) {
+            $page_token = $page['access_token'];
+            $page_id = $page['id'];
+            $page_name = $page['name'];
+            
+            // Get Instagram Business account linked to this page
+            $ig_response = wp_remote_get("https://graph.facebook.com/v18.0/{$page_id}?fields=instagram_business_account&access_token={$page_token}", ['timeout' => 30]);
+            $ig_data = json_decode(wp_remote_retrieve_body($ig_response), true);
+            
+            if (!empty($ig_data['instagram_business_account']['id'])) {
+                $instagram_id = $ig_data['instagram_business_account']['id'];
+                
+                // Get Instagram username
+                $ig_user_response = wp_remote_get("https://graph.facebook.com/v18.0/{$instagram_id}?fields=username&access_token={$page_token}", ['timeout' => 30]);
+                $ig_user_data = json_decode(wp_remote_retrieve_body($ig_user_response), true);
+                $instagram_username = $ig_user_data['username'] ?? '';
+                break;
+            }
+        }
+        
+        if (empty($instagram_id)) {
+            wp_redirect(admin_url('options-general.php?page=flm-importer&instagram_error=' . urlencode('No Instagram Business account found linked to your Facebook Pages.')));
+            exit;
+        }
+        
+        // Save everything
+        $settings['facebook_access_token'] = $access_token;
+        $settings['facebook_page_id'] = $page_id;
+        $settings['facebook_page_name'] = $page_name;
+        $settings['facebook_page_access_token'] = $page_token;
+        $settings['instagram_business_id'] = $instagram_id;
+        $settings['instagram_username'] = $instagram_username;
+        $settings['instagram_connected'] = true;
+        update_option('flm_settings', $settings);
+        
+        $this->log_activity('social', "Connected Instagram: @{$instagram_username} (via {$page_name})");
+        
+        wp_redirect(admin_url('options-general.php?page=flm-importer&instagram_connected=1'));
+        exit;
+    }
+    
+    /**
+     * Disconnect Instagram
+     */
+    public function ajax_instagram_disconnect() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+        
+        $settings = $this->get_settings();
+        $username = $settings['instagram_username'] ?? '';
+        
+        $settings['instagram_business_id'] = '';
+        $settings['instagram_username'] = '';
+        $settings['instagram_connected'] = false;
+        $settings['facebook_page_access_token'] = '';
+        update_option('flm_settings', $settings);
+        
+        $this->log_activity('social', "Disconnected Instagram" . ($username ? ": @{$username}" : ''));
+        
+        wp_send_json_success(['message' => 'Instagram disconnected']);
+    }
+    
+    /**
+     * Test Instagram post
+     */
+    public function ajax_instagram_test_post() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+        
+        // Instagram requires an image, use a placeholder for testing
+        $test_image = 'https://via.placeholder.com/1080x1080.png?text=FLM+GameDay+Test';
+        
+        $result = $this->post_to_instagram(0, '🧪 Test post from FLM GameDay Atlanta! #Atlanta #Sports #Test', $test_image);
+        
+        if ($result['success']) {
+            wp_send_json_success([
+                'message' => 'Test post published to Instagram!',
+                'post_id' => $result['post_id'],
+            ]);
+        } else {
+            wp_send_json_error($result['error']);
+        }
+    }
+    
+    /**
+     * Post to Instagram
+     */
+    private function post_to_instagram($post_id, $caption, $image_url) {
+        $settings = $this->get_settings();
+        
+        $instagram_id = $settings['instagram_business_id'] ?? '';
+        $access_token = $settings['facebook_page_access_token'] ?? '';
+        
+        if (empty($instagram_id) || empty($access_token)) {
+            return ['success' => false, 'error' => 'Instagram not connected'];
+        }
+        
+        if (empty($image_url)) {
+            return ['success' => false, 'error' => 'Image URL required for Instagram'];
+        }
+        
+        // Step 1: Create media container
+        $container_response = wp_remote_post("https://graph.facebook.com/v18.0/{$instagram_id}/media", [
+            'body' => [
+                'image_url' => $image_url,
+                'caption' => $caption,
+                'access_token' => $access_token,
+            ],
+            'timeout' => 60,
+        ]);
+        
+        if (is_wp_error($container_response)) {
+            return ['success' => false, 'error' => $container_response->get_error_message()];
+        }
+        
+        $container_data = json_decode(wp_remote_retrieve_body($container_response), true);
+        
+        if (empty($container_data['id'])) {
+            $error = $container_data['error']['message'] ?? 'Failed to create media container';
+            return ['success' => false, 'error' => $error];
+        }
+        
+        $container_id = $container_data['id'];
+        
+        // Step 2: Wait for media to be ready (Instagram processes the image)
+        sleep(3);
+        
+        // Step 3: Publish the media
+        $publish_response = wp_remote_post("https://graph.facebook.com/v18.0/{$instagram_id}/media_publish", [
+            'body' => [
+                'creation_id' => $container_id,
+                'access_token' => $access_token,
+            ],
+            'timeout' => 60,
+        ]);
+        
+        if (is_wp_error($publish_response)) {
+            return ['success' => false, 'error' => $publish_response->get_error_message()];
+        }
+        
+        $publish_data = json_decode(wp_remote_retrieve_body($publish_response), true);
+        
+        if (!empty($publish_data['id'])) {
+            $this->log_activity('social', "Posted to Instagram: " . substr($caption, 0, 50) . '...');
+            return [
+                'success' => true,
+                'post_id' => $publish_data['id'],
+            ];
+        }
+        
+        $error = $publish_data['error']['message'] ?? 'Failed to publish to Instagram';
+        return ['success' => false, 'error' => $error];
+    }
+    
+    /**
+     * Get social stats for dashboard
+     */
+    public function ajax_get_social_stats() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('edit_posts')) {
+            wp_send_json_error('Unauthorized');
+        }
+        
+        $settings = $this->get_settings();
+        $stats = [
+            'twitter' => [
+                'connected' => !empty($settings['twitter_oauth2_access_token']),
+                'username' => $settings['twitter_username'] ?? '',
+            ],
+            'instagram' => [
+                'connected' => !empty($settings['instagram_connected']),
+                'username' => $settings['instagram_username'] ?? '',
+            ],
+            'facebook' => [
+                'connected' => !empty($settings['facebook_page_access_token']),
+                'page_name' => $settings['facebook_page_name'] ?? '',
+            ],
+        ];
+        
+        wp_send_json_success($stats);
+    }
+    
+    // ========================================
     // ADMIN UI
     // ========================================
     
@@ -23869,69 +24865,170 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
                                     <h2 class="flm-card-title">
                                         <span class="flm-card-icon"><?php echo $this->icon('plug'); ?></span>
                                         Social Integrations
+                                        <span class="flm-badge" style="background:rgba(139,92,246,0.15);color:#8b5cf6;margin-left:8px;">v2.18.0</span>
                                     </h2>
                                 </div>
                                 <div class="flm-card-body">
-                                    <div class="flm-grid-2">
-                                        <!-- Twitter Status -->
-                                        <div class="flm-integration-status-card <?php echo !empty($settings['twitter_access_token']) ? 'connected' : 'disconnected'; ?>">
-                                            <div class="flm-integration-status-icon">
-                                                <svg viewBox="0 0 24 24" fill="currentColor" style="width:24px;height:24px;"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
-                                            </div>
-                                            <div class="flm-integration-status-info">
-                                                <div class="flm-integration-status-name">Twitter/X</div>
-                                                <div class="flm-integration-status-state">
-                                                    <?php if (!empty($settings['twitter_access_token'])): ?>
-                                                    <span style="color:var(--flm-success);">● Connected</span>
+                                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;">
+                                        
+                                        <!-- Twitter/X OAuth 2.0 -->
+                                        <div class="flm-social-connect-card" style="background:var(--flm-bg-input);border-radius:12px;padding:20px;border:1px solid var(--flm-border);">
+                                            <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+                                                <div style="width:48px;height:48px;border-radius:12px;background:#000;display:flex;align-items:center;justify-content:center;">
+                                                    <svg viewBox="0 0 24 24" fill="white" style="width:24px;height:24px;"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+                                                </div>
+                                                <div style="flex:1;">
+                                                    <div style="font-weight:600;color:var(--flm-text);">Twitter / X</div>
+                                                    <?php if (!empty($settings['twitter_oauth2_access_token'])): ?>
+                                                    <div style="font-size:12px;color:var(--flm-success);">● Connected as @<?php echo esc_html($settings['twitter_username']); ?></div>
+                                                    <?php elseif (!empty($settings['twitter_access_token'])): ?>
+                                                    <div style="font-size:12px;color:var(--flm-warning);">● Legacy API (Upgrade to OAuth 2.0)</div>
                                                     <?php else: ?>
-                                                    <span style="color:var(--flm-text-muted);">○ Not configured</span>
+                                                    <div style="font-size:12px;color:var(--flm-text-muted);">○ Not connected</div>
                                                     <?php endif; ?>
                                                 </div>
                                             </div>
-                                            <div class="flm-integration-status-actions">
-                                                <?php if (!empty($settings['twitter_access_token'])): ?>
-                                                <button type="button" class="flm-btn flm-btn-secondary flm-btn-sm flm-test-social" data-platform="twitter">
-                                                    Test Post
+                                            
+                                            <?php if (!empty($settings['twitter_oauth2_access_token'])): ?>
+                                            <div style="display:flex;gap:8px;">
+                                                <button type="button" class="flm-btn flm-btn-secondary flm-btn-sm" id="flm-twitter-test">
+                                                    <?php echo $this->icon('bolt'); ?> Test Post
                                                 </button>
-                                                <?php else: ?>
-                                                <button type="button" class="flm-btn flm-btn-primary flm-btn-sm" onclick="document.querySelector('[data-tab=settings]').click(); setTimeout(function(){document.getElementById('flm-wizard-twitter').classList.add('active');}, 300);">
-                                                    Configure
+                                                <button type="button" class="flm-btn flm-btn-secondary flm-btn-sm" id="flm-twitter-disconnect" style="color:var(--flm-danger);">
+                                                    Disconnect
                                                 </button>
-                                                <?php endif; ?>
                                             </div>
+                                            <?php else: ?>
+                                            <div style="margin-bottom:12px;">
+                                                <div class="flm-form-group" style="margin:0 0 8px;">
+                                                    <label class="flm-label" style="font-size:11px;">Client ID</label>
+                                                    <input type="text" name="flm_settings[twitter_client_id]" class="flm-input flm-input-sm" value="<?php echo esc_attr($settings['twitter_client_id'] ?? ''); ?>" placeholder="Your Twitter Client ID">
+                                                </div>
+                                                <div class="flm-form-group" style="margin:0;">
+                                                    <label class="flm-label" style="font-size:11px;">Client Secret</label>
+                                                    <input type="password" name="flm_settings[twitter_client_secret]" class="flm-input flm-input-sm" value="<?php echo esc_attr($settings['twitter_client_secret'] ?? ''); ?>" placeholder="Your Twitter Client Secret">
+                                                </div>
+                                            </div>
+                                            <button type="button" class="flm-btn flm-btn-primary flm-btn-sm" id="flm-twitter-connect" style="width:100%;background:#000;">
+                                                <svg viewBox="0 0 24 24" fill="currentColor" style="width:14px;height:14px;margin-right:6px;"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+                                                Connect Twitter/X
+                                            </button>
+                                            <p style="margin:8px 0 0;font-size:10px;color:var(--flm-text-muted);">
+                                                <a href="https://developer.twitter.com/en/portal/dashboard" target="_blank" style="color:var(--flm-primary);">Get API credentials →</a>
+                                            </p>
+                                            <?php endif; ?>
                                         </div>
                                         
-                                        <!-- Facebook Status -->
-                                        <div class="flm-integration-status-card <?php echo !empty($settings['facebook_access_token']) ? 'connected' : 'disconnected'; ?>">
-                                            <div class="flm-integration-status-icon" style="color:#1877F2;">
-                                                <svg viewBox="0 0 24 24" fill="currentColor" style="width:24px;height:24px;"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
-                                            </div>
-                                            <div class="flm-integration-status-info">
-                                                <div class="flm-integration-status-name">Facebook</div>
-                                                <div class="flm-integration-status-state">
-                                                    <?php if (!empty($settings['facebook_access_token'])): ?>
-                                                    <span style="color:var(--flm-success);">● Connected</span>
+                                        <!-- Instagram -->
+                                        <div class="flm-social-connect-card" style="background:var(--flm-bg-input);border-radius:12px;padding:20px;border:1px solid var(--flm-border);">
+                                            <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+                                                <div style="width:48px;height:48px;border-radius:12px;background:linear-gradient(45deg, #f09433 0%, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%);display:flex;align-items:center;justify-content:center;">
+                                                    <svg viewBox="0 0 24 24" fill="white" style="width:24px;height:24px;"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/></svg>
+                                                </div>
+                                                <div style="flex:1;">
+                                                    <div style="font-weight:600;color:var(--flm-text);">Instagram</div>
+                                                    <?php if (!empty($settings['instagram_connected'])): ?>
+                                                    <div style="font-size:12px;color:var(--flm-success);">● Connected as @<?php echo esc_html($settings['instagram_username']); ?></div>
                                                     <?php else: ?>
-                                                    <span style="color:var(--flm-text-muted);">○ Not configured</span>
+                                                    <div style="font-size:12px;color:var(--flm-text-muted);">○ Not connected</div>
                                                     <?php endif; ?>
                                                 </div>
                                             </div>
-                                            <div class="flm-integration-status-actions">
-                                                <?php if (!empty($settings['facebook_access_token'])): ?>
-                                                <button type="button" class="flm-btn flm-btn-secondary flm-btn-sm flm-test-social" data-platform="facebook">
-                                                    Test Post
-                                                </button>
-                                                <?php else: ?>
-                                                <button type="button" class="flm-btn flm-btn-primary flm-btn-sm" onclick="document.querySelector('[data-tab=settings]').click(); setTimeout(function(){document.getElementById('flm-wizard-facebook').classList.add('active');}, 300);">
-                                                    Configure
-                                                </button>
-                                                <?php endif; ?>
+                                            
+                                            <?php if (!empty($settings['instagram_connected'])): ?>
+                                            <div style="font-size:11px;color:var(--flm-text-muted);margin-bottom:12px;">
+                                                Via: <?php echo esc_html($settings['facebook_page_name'] ?? 'Facebook Page'); ?>
                                             </div>
+                                            <div style="display:flex;gap:8px;">
+                                                <button type="button" class="flm-btn flm-btn-secondary flm-btn-sm" id="flm-instagram-test">
+                                                    <?php echo $this->icon('bolt'); ?> Test Post
+                                                </button>
+                                                <button type="button" class="flm-btn flm-btn-secondary flm-btn-sm" id="flm-instagram-disconnect" style="color:var(--flm-danger);">
+                                                    Disconnect
+                                                </button>
+                                            </div>
+                                            <?php else: ?>
+                                            <div style="margin-bottom:12px;">
+                                                <div class="flm-form-group" style="margin:0 0 8px;">
+                                                    <label class="flm-label" style="font-size:11px;">Facebook App ID</label>
+                                                    <input type="text" name="flm_settings[facebook_app_id]" class="flm-input flm-input-sm" value="<?php echo esc_attr($settings['facebook_app_id'] ?? ''); ?>" placeholder="Your Facebook App ID">
+                                                </div>
+                                                <div class="flm-form-group" style="margin:0;">
+                                                    <label class="flm-label" style="font-size:11px;">App Secret</label>
+                                                    <input type="password" name="flm_settings[facebook_app_secret]" class="flm-input flm-input-sm" value="<?php echo esc_attr($settings['facebook_app_secret'] ?? ''); ?>" placeholder="Your Facebook App Secret">
+                                                </div>
+                                            </div>
+                                            <button type="button" class="flm-btn flm-btn-primary flm-btn-sm" id="flm-instagram-connect" style="width:100%;background:linear-gradient(45deg, #f09433, #dc2743, #bc1888);">
+                                                <svg viewBox="0 0 24 24" fill="currentColor" style="width:14px;height:14px;margin-right:6px;"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073z"/></svg>
+                                                Connect Instagram
+                                            </button>
+                                            <p style="margin:8px 0 0;font-size:10px;color:var(--flm-text-muted);">
+                                                Requires Instagram Business account linked to a Facebook Page.
+                                                <a href="https://developers.facebook.com/apps/" target="_blank" style="color:var(--flm-primary);">Create App →</a>
+                                            </p>
+                                            <?php endif; ?>
+                                        </div>
+                                        
+                                        <!-- Facebook Page -->
+                                        <div class="flm-social-connect-card" style="background:var(--flm-bg-input);border-radius:12px;padding:20px;border:1px solid var(--flm-border);">
+                                            <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+                                                <div style="width:48px;height:48px;border-radius:12px;background:#1877F2;display:flex;align-items:center;justify-content:center;">
+                                                    <svg viewBox="0 0 24 24" fill="white" style="width:24px;height:24px;"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
+                                                </div>
+                                                <div style="flex:1;">
+                                                    <div style="font-weight:600;color:var(--flm-text);">Facebook Page</div>
+                                                    <?php if (!empty($settings['facebook_page_access_token'])): ?>
+                                                    <div style="font-size:12px;color:var(--flm-success);">● <?php echo esc_html($settings['facebook_page_name'] ?? 'Connected'); ?></div>
+                                                    <?php else: ?>
+                                                    <div style="font-size:12px;color:var(--flm-text-muted);">○ Connect via Instagram</div>
+                                                    <?php endif; ?>
+                                                </div>
+                                            </div>
+                                            
+                                            <?php if (!empty($settings['facebook_page_access_token'])): ?>
+                                            <div style="display:flex;gap:8px;">
+                                                <button type="button" class="flm-btn flm-btn-secondary flm-btn-sm flm-test-social" data-platform="facebook">
+                                                    <?php echo $this->icon('bolt'); ?> Test Post
+                                                </button>
+                                            </div>
+                                            <?php else: ?>
+                                            <p style="margin:0;font-size:11px;color:var(--flm-text-muted);">
+                                                Facebook Page access is automatically configured when you connect Instagram. Both use the same Facebook App credentials.
+                                            </p>
+                                            <?php endif; ?>
                                         </div>
                                     </div>
                                     
-                                    <div style="margin-top:16px;padding:12px;background:var(--flm-bg-input);border-radius:8px;font-size:12px;color:var(--flm-text-muted);">
-                                        💡 <strong>Tip:</strong> Enable auto-posting in Settings → Integrations to automatically share new articles to social media when they're imported.
+                                    <!-- Auto-Post Settings -->
+                                    <div style="margin-top:20px;padding:16px;background:var(--flm-bg);border-radius:12px;border:1px solid var(--flm-border);">
+                                        <h4 style="margin:0 0 12px;font-size:13px;font-weight:600;color:var(--flm-text);">Auto-Post When Importing</h4>
+                                        <div style="display:flex;flex-wrap:wrap;gap:16px;">
+                                            <label class="flm-checkbox-card" style="flex:1;min-width:150px;">
+                                                <input type="checkbox" name="flm_settings[auto_post_twitter]" value="1" <?php checked(!empty($settings['auto_post_twitter'])); ?> <?php disabled(empty($settings['twitter_oauth2_access_token']) && empty($settings['twitter_access_token'])); ?>>
+                                                <span class="flm-checkbox-card-content">
+                                                    <span class="flm-checkbox-card-title">Twitter/X</span>
+                                                    <span class="flm-checkbox-card-desc"><?php echo !empty($settings['twitter_oauth2_access_token']) || !empty($settings['twitter_access_token']) ? 'Auto-post tweets' : 'Connect first'; ?></span>
+                                                </span>
+                                            </label>
+                                            <label class="flm-checkbox-card" style="flex:1;min-width:150px;">
+                                                <input type="checkbox" name="flm_settings[auto_post_instagram]" value="1" <?php checked(!empty($settings['auto_post_instagram'])); ?> <?php disabled(empty($settings['instagram_connected'])); ?>>
+                                                <span class="flm-checkbox-card-content">
+                                                    <span class="flm-checkbox-card-title">Instagram</span>
+                                                    <span class="flm-checkbox-card-desc"><?php echo !empty($settings['instagram_connected']) ? 'Auto-post with image' : 'Connect first'; ?></span>
+                                                </span>
+                                            </label>
+                                            <label class="flm-checkbox-card" style="flex:1;min-width:150px;">
+                                                <input type="checkbox" name="flm_settings[auto_post_facebook]" value="1" <?php checked(!empty($settings['auto_post_facebook'])); ?> <?php disabled(empty($settings['facebook_page_access_token'])); ?>>
+                                                <span class="flm-checkbox-card-content">
+                                                    <span class="flm-checkbox-card-title">Facebook</span>
+                                                    <span class="flm-checkbox-card-desc"><?php echo !empty($settings['facebook_page_access_token']) ? 'Auto-post to page' : 'Connect first'; ?></span>
+                                                </span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                    
+                                    <div style="margin-top:16px;padding:12px;background:rgba(88,166,255,0.1);border-radius:8px;font-size:12px;color:var(--flm-text-muted);border:1px solid rgba(88,166,255,0.2);">
+                                        💡 <strong>Tip:</strong> Posts are automatically shared when new articles are imported and set to "Publish" status. Images are required for Instagram posts.
                                     </div>
                                 </div>
                             </div>
