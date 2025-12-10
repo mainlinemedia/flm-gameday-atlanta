@@ -3,7 +3,7 @@
  * Plugin Name: FLM GameDay Atlanta
  * Plugin URI: https://github.com/mainlinemedia/flm-gameday-atlanta
  * Description: Import Braves, Hawks, Falcons, United, Dream, UGA & GT content from Field Level Media with AI enhancement, social posting, and analytics.
- * Version: 2.18.2
+ * Version: 2.18.4
  * Author: Austin / Mainline Media Group
  * Author URI: https://mainlinemediagroup.com
  * License: Proprietary
@@ -20,7 +20,7 @@ if (!defined('ABSPATH')) exit;
 class FLM_GameDay_Atlanta {
     
     private $api_base = 'https://api.fieldlevelmedia.com/v1';
-    private $version = '2.18.2';
+    private $version = '2.18.4';
     
     // GitHub Update Configuration
     private $github_username = 'mainlinemedia';
@@ -69,6 +69,7 @@ class FLM_GameDay_Atlanta {
             'dream' => true,
             'uga' => true,
             'gt' => true,
+            'faze' => true,
         ],
         'create_team_categories' => true,
         'create_league_categories' => true,
@@ -278,6 +279,17 @@ class FLM_GameDay_Atlanta {
             'team_ids' => ['233', '769', '1087'],  // NCAAF: 233, NCAAB: 769, WNCAAB: 1087
             'color' => '#B3A369',
             'secondary' => '#003057',
+        ],
+        'faze' => [
+            'name' => 'Atlanta FaZe / Reign',
+            'category_name' => 'Atlanta Esports',
+            'league' => 'Esports',
+            'league_id' => 123,  // Primary: Call of Duty
+            'league_ids' => [123, 124],  // Call of Duty + Overwatch
+            'identifiers' => ['FaZe', 'Atlanta FaZe', 'Atlanta Reign'],
+            'team_ids' => ['1411', '1391'],  // 1411=Atlanta FaZe (COD), 1391=Atlanta Reign (OW)
+            'color' => '#FF0000',
+            'secondary' => '#000000',
         ],
     ];
     
@@ -14811,12 +14823,12 @@ class FLM_GameDay_Atlanta {
         $home_id = (string)($home_team['teamId'] ?? '');
         $away_id = (string)($away_team['teamId'] ?? '');
         
-        // Get team names for identifier matching
-        $home_name = $home_team['name'] ?? $home_team['shortName'] ?? '';
-        $away_name = $away_team['name'] ?? $away_team['shortName'] ?? '';
-        $headline = strtolower($story['headline'] ?? '');
+        // No team IDs = can't match (strict matching for accuracy)
+        if (empty($home_id) && empty($away_id)) {
+            return false;
+        }
         
-        // Match by team ID first (most accurate)
+        // Match by team ID ONLY (strict matching for accuracy)
         foreach ($this->target_teams as $key => $team_config) {
             if (empty($settings['teams_enabled'][$key])) {
                 continue;
@@ -14825,24 +14837,7 @@ class FLM_GameDay_Atlanta {
             if (!empty($team_config['team_ids'])) {
                 foreach ($team_config['team_ids'] as $tid) {
                     $tid = (string)$tid;
-                    if (($home_id && $home_id === $tid) || ($away_id && $away_id === $tid)) {
-                        return $key;
-                    }
-                }
-            }
-        }
-        
-        // Fallback: Match by identifiers in team names or headline
-        foreach ($this->target_teams as $key => $team_config) {
-            if (empty($settings['teams_enabled'][$key])) {
-                continue;
-            }
-            
-            if (!empty($team_config['identifiers'])) {
-                foreach ($team_config['identifiers'] as $identifier) {
-                    if (stripos($home_name, $identifier) !== false || 
-                        stripos($away_name, $identifier) !== false ||
-                        stripos($headline, strtolower($identifier)) !== false) {
+                    if ($home_id === $tid || $away_id === $tid) {
                         return $key;
                     }
                 }
@@ -14864,8 +14859,8 @@ class FLM_GameDay_Atlanta {
         if ($single_league !== null) {
             $leagues_to_check = [(int)$single_league];
         } else {
-            // All leagues: MLB=1, NFL=30, NBA=26, WNBA=21, MLS=72, NCAAF=31, NCAAB=20, WNCAAB=27
-            $leagues_to_check = [1, 30, 26, 21, 72, 31, 20, 27];
+            // All leagues + Esports: MLB=1, NFL=30, NBA=26, WNBA=21, MLS=72, NCAAF=31, NCAAB=20, WNCAAB=27, COD=123, OW=124
+            $leagues_to_check = [1, 30, 26, 21, 72, 31, 20, 27, 123, 124];
         }
         
         $imported = 0;
@@ -14883,6 +14878,8 @@ class FLM_GameDay_Atlanta {
             31 => 'NCAAF',
             20 => 'NCAAB',
             27 => 'WNCAAB',
+            123 => 'Call of Duty',
+            124 => 'Overwatch',
         ];
         $this->log_error('info', 'import', 'Starting import run', [
             'leagues' => array_map(function($id) use ($league_names) { 
@@ -15288,6 +15285,7 @@ class FLM_GameDay_Atlanta {
             'dream' => '#AtlantaDream #DreamOn #WNBA',
             'uga' => '#UGA #GoDawgs #Dawgs #Georgia #SEC',
             'gt' => '#GaTech #TogetherWeSwarm #YellowJackets #ACC',
+            'faze' => '#FaZeUp #FaZeClan #AtlantaFaZe #Esports #Gaming',
         ];
         
         $caption = str_replace([
@@ -15350,6 +15348,7 @@ class FLM_GameDay_Atlanta {
             'dream' => '#AtlantaDream #DreamOn',
             'uga' => '#UGA #GoDawgs',
             'gt' => '#GaTech #TogetherWeSwarm',
+            'faze' => '#FaZeUp #FaZeClan',
         ];
         
         $tweet_text = str_replace([
@@ -16018,7 +16017,7 @@ class FLM_GameDay_Atlanta {
         $output[] = '';
         
         // Test each league endpoint (using correct FLM league IDs)
-        // Includes ALL configured leagues: MLB, NFL, NBA, WNBA, MLS, NCAAF, NCAAB, WNCAAB
+        // Includes ALL configured leagues + Esports
         $test_leagues = [
             1 => 'MLB', 
             30 => 'NFL', 
@@ -16028,6 +16027,8 @@ class FLM_GameDay_Atlanta {
             31 => 'NCAAF',
             20 => 'NCAAB',
             27 => 'WNCAAB',
+            123 => 'Call of Duty',
+            124 => 'Overwatch',
         ];
         
         $league_count = 0;
@@ -16050,13 +16051,40 @@ class FLM_GameDay_Atlanta {
                 $output[] = "<span class=\"warning\">⚠ {$league_name} (League {$league_id}): Invalid response</span>";
             } else {
                 $matches = 0;
+                $team_ids_found = [];
                 foreach ($stories as $story) {
+                    // Collect team IDs for debugging
+                    $home_id = $story['homeTeam']['teamId'] ?? null;
+                    $away_id = $story['awayTeam']['teamId'] ?? null;
+                    $home_name = $story['homeTeam']['name'] ?? $story['homeTeam']['shortName'] ?? '';
+                    $away_name = $story['awayTeam']['name'] ?? $story['awayTeam']['shortName'] ?? '';
+                    if ($home_id && !isset($team_ids_found[$home_id])) {
+                        $team_ids_found[$home_id] = $home_name ?: "Team {$home_id}";
+                    }
+                    if ($away_id && !isset($team_ids_found[$away_id])) {
+                        $team_ids_found[$away_id] = $away_name ?: "Team {$away_id}";
+                    }
+                    
                     if ($this->get_matching_team($story)) {
                         $matches++;
                     }
                 }
                 $output[] = "<span class=\"success\">✓ {$league_name} (League {$league_id}): " . count($stories) . " stories</span>";
                 $output[] = "  Matching your configured teams: {$matches}";
+                
+                // Show team IDs found (helpful for configuring correct IDs)
+                if (!empty($team_ids_found)) {
+                    $output[] = "  <span class=\"info\">Team IDs in feed:</span>";
+                    $shown = 0;
+                    foreach ($team_ids_found as $tid => $tname) {
+                        if ($shown >= 8) {
+                            $output[] = "    ... and " . (count($team_ids_found) - 8) . " more teams";
+                            break;
+                        }
+                        $output[] = "    ID {$tid}: {$tname}";
+                        $shown++;
+                    }
+                }
             }
             
             // Rate limit pause between API calls (not on last one)
@@ -17217,8 +17245,8 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
         }
         
         $settings = $this->get_settings();
-        // All leagues: MLB=1, NFL=30, NBA=26, WNBA=21, MLS=72, NCAAF=31, NCAAB=20, WNCAAB=27
-        $leagues_to_check = [1, 30, 26, 21, 72, 31, 20, 27];
+        // All leagues + Esports
+        $leagues_to_check = [1, 30, 26, 21, 72, 31, 20, 27, 123, 124];
         $league_names = [
             1 => 'MLB', 
             30 => 'NFL', 
@@ -17228,6 +17256,8 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
             31 => 'NCAAF',
             20 => 'NCAAB',
             27 => 'WNCAAB',
+            123 => 'Call of Duty',
+            124 => 'Overwatch',
         ];
         
         $preview_stories = [];
@@ -18185,6 +18215,7 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
             'dream' => '#AtlantaDream #DreamOn',
             'uga' => '#UGA #GoDawgs',
             'gt' => '#GaTech #TogetherWeSwarm',
+            'faze' => '#FaZeUp #FaZeClan',
         ];
         
         if ($platform === 'twitter') {
@@ -22895,7 +22926,7 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
                 'low' => 'https://ps.w.org/flm-gameday-atlanta/assets/banner-772x250.png',
                 'high' => 'https://ps.w.org/flm-gameday-atlanta/assets/banner-1544x500.png',
             ];
-            $obj->tested = '6.7';
+            $obj->tested = '6.9';
             $obj->requires_php = '7.4';
             
             $transient->response[plugin_basename(__FILE__)] = $obj;
