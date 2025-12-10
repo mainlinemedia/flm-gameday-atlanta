@@ -3,7 +3,7 @@
  * Plugin Name: FLM GameDay Atlanta
  * Plugin URI: https://github.com/mainlinemedia/flm-gameday-atlanta
  * Description: Import Braves, Hawks, Falcons, United, Dream, UGA & GT content from Field Level Media with AI enhancement, social posting, and analytics.
- * Version: 2.20.1
+ * Version: 2.21.0
  * Author: Austin / Mainline Media Group
  * Author URI: https://mainlinemediagroup.com
  * License: Proprietary
@@ -20,7 +20,7 @@ if (!defined('ABSPATH')) exit;
 class FLM_GameDay_Atlanta {
     
     private $api_base = 'https://api.fieldlevelmedia.com/v1';
-    private $version = '2.20.1';
+    private $version = '2.21.0';
     
     // GitHub Update Configuration
     private $github_username = 'mainlinemedia';
@@ -205,6 +205,27 @@ class FLM_GameDay_Atlanta {
         'export_include_pageviews' => true,
         'export_include_social' => true,
         'export_include_esp' => true,
+        // Social Queue System (v2.21.0)
+        'queue_enabled' => true,
+        'queue_auto_process' => true,
+        'queue_process_interval' => 'every5min',  // every5min, every15min, hourly
+        'queue_max_retries' => 3,
+        'queue_retry_delay' => 300,  // Seconds between retries
+        'queue_require_approval' => false,  // Posts need manual approval
+        'queue_optimal_times' => true,  // Auto-schedule for best times
+        'queue_batch_size' => 5,  // Max posts to process per cron run
+        // Engagement Tracking (v2.21.0)
+        'engagement_tracking_enabled' => true,
+        'engagement_sync_interval' => 'hourly',  // How often to pull metrics
+        'engagement_track_impressions' => true,
+        'engagement_track_clicks' => true,
+        'engagement_track_retweets' => true,
+        'engagement_track_likes' => true,
+        'engagement_track_replies' => true,
+        'engagement_history_days' => 30,  // Days to keep historical data
+        // Twitter Media (v2.21.0)
+        'twitter_upload_images' => true,
+        'twitter_max_image_size' => 5242880,  // 5MB
     ];
     
     // Integration endpoints (v2.8.0)
@@ -467,6 +488,29 @@ class FLM_GameDay_Atlanta {
         add_action('wp_ajax_flm_test_webhook', [$this, 'ajax_test_webhook']);
         add_action('wp_ajax_flm_save_webhooks', [$this, 'ajax_save_webhooks']);
         
+        // v2.21.0: Phase 1 Social Infrastructure
+        // Queue Management
+        add_action('wp_ajax_flm_queue_get_all', [$this, 'ajax_queue_get_all']);
+        add_action('wp_ajax_flm_queue_retry', [$this, 'ajax_queue_retry']);
+        add_action('wp_ajax_flm_queue_cancel', [$this, 'ajax_queue_cancel']);
+        add_action('wp_ajax_flm_queue_approve', [$this, 'ajax_queue_approve']);
+        add_action('wp_ajax_flm_queue_reschedule', [$this, 'ajax_queue_reschedule']);
+        add_action('wp_ajax_flm_queue_clear_completed', [$this, 'ajax_queue_clear_completed']);
+        add_action('wp_ajax_flm_queue_bulk_action', [$this, 'ajax_queue_bulk_action']);
+        add_action('flm_process_social_queue', [$this, 'process_social_queue']);
+        
+        // Engagement Tracking
+        add_action('wp_ajax_flm_get_engagement_metrics', [$this, 'ajax_get_engagement_metrics']);
+        add_action('wp_ajax_flm_sync_engagement_now', [$this, 'ajax_sync_engagement_now']);
+        add_action('wp_ajax_flm_get_post_engagement', [$this, 'ajax_get_post_engagement']);
+        add_action('flm_sync_engagement_metrics', [$this, 'sync_engagement_metrics']);
+        
+        // Twitter Media Upload
+        add_action('wp_ajax_flm_twitter_upload_media', [$this, 'ajax_twitter_upload_media']);
+        
+        // Database setup on plugin load
+        add_action('plugins_loaded', [$this, 'maybe_upgrade_database']);
+        
         // RSS Feeds (v2.20.0)
         add_action('init', [$this, 'register_rss_feeds']);
         add_action('pre_get_posts', [$this, 'modify_rss_query']);
@@ -479,6 +523,19 @@ class FLM_GameDay_Atlanta {
         $schedules['every6hours'] = [
             'interval' => 6 * HOUR_IN_SECONDS,
             'display' => __('Every 6 Hours'),
+        ];
+        // v2.21.0: Queue processing schedules
+        $schedules['every5min'] = [
+            'interval' => 5 * MINUTE_IN_SECONDS,
+            'display' => __('Every 5 Minutes'),
+        ];
+        $schedules['every15min'] = [
+            'interval' => 15 * MINUTE_IN_SECONDS,
+            'display' => __('Every 15 Minutes'),
+        ];
+        $schedules['every30min'] = [
+            'interval' => 30 * MINUTE_IN_SECONDS,
+            'display' => __('Every 30 Minutes'),
         ];
         return $schedules;
     }
@@ -14845,6 +14902,256 @@ class FLM_GameDay_Atlanta {
         }
     };
     
+    // ========================================
+    // QUEUE MANAGEMENT (v2.21.0)
+    // ========================================
+    
+    var QueueManager = {
+        selectedItems: [],
+        
+        init: function() {
+            this.bindEvents();
+            
+            // Load queue when tab is shown
+            $(document).on("click", ".flm-tab[data-tab=\"queue\"]", function() {
+                QueueManager.loadQueue();
+                QueueManager.loadEngagement();
+            });
+            
+            // Auto-refresh if already on queue tab
+            if ($(".flm-tab[data-tab=\"queue\"]").hasClass("active")) {
+                this.loadQueue();
+                this.loadEngagement();
+            }
+        },
+        
+        bindEvents: function() {
+            var self = this;
+            
+            // Refresh button
+            $("#flm-queue-refresh").on("click", function() {
+                self.loadQueue();
+            });
+            
+            // Process now button
+            $("#flm-queue-process-now").on("click", function() {
+                var $btn = $(this);
+                $btn.prop("disabled", true).html(flmIcons.spinner + " Processing...");
+                
+                $.post(flmData.ajaxUrl, {
+                    action: "flm_process_social_queue",
+                    nonce: flmData.nonce
+                }, function(response) {
+                    showToast("Queue processed", "success");
+                    self.loadQueue();
+                }).always(function() {
+                    $btn.prop("disabled", false).html(flmIcons.bolt + " Process Now");
+                });
+            });
+            
+            // Filter changes
+            $("#flm-queue-filter-status, #flm-queue-filter-platform").on("change", function() {
+                self.loadQueue();
+            });
+            
+            // Clear completed
+            $("#flm-queue-clear-completed").on("click", function() {
+                if (!confirm("Clear all completed and cancelled items?")) return;
+                
+                $.post(flmData.ajaxUrl, {
+                    action: "flm_queue_clear_completed",
+                    nonce: flmData.nonce
+                }, function(response) {
+                    if (response.success) {
+                        showToast(response.data.message, "success");
+                        self.loadQueue();
+                    } else {
+                        showToast(response.data.message || "Error", "error");
+                    }
+                });
+            });
+            
+            // Select all checkbox
+            $("#flm-queue-select-all").on("change", function() {
+                var checked = $(this).prop("checked");
+                $(".flm-queue-checkbox").prop("checked", checked);
+                self.updateSelectedCount();
+            });
+            
+            // Individual checkbox
+            $(document).on("change", ".flm-queue-checkbox", function() {
+                self.updateSelectedCount();
+            });
+            
+            // Bulk actions
+            $("[data-bulk-action]").on("click", function() {
+                var action = $(this).data("bulk-action");
+                var ids = [];
+                $(".flm-queue-checkbox:checked").each(function() {
+                    ids.push($(this).data("id"));
+                });
+                
+                if (ids.length === 0) return;
+                
+                if (action === "cancel" && !confirm("Cancel " + ids.length + " items?")) return;
+                
+                $.post(flmData.ajaxUrl, {
+                    action: "flm_queue_bulk_action",
+                    nonce: flmData.nonce,
+                    bulk_action: action,
+                    ids: ids
+                }, function(response) {
+                    if (response.success) {
+                        showToast(response.data.message, "success");
+                        self.loadQueue();
+                    } else {
+                        showToast(response.data.message || "Error", "error");
+                    }
+                });
+            });
+            
+            // Row actions (delegated)
+            $(document).on("click", ".flm-queue-action", function(e) {
+                e.preventDefault();
+                var $btn = $(this);
+                var id = $btn.data("id");
+                var action = $btn.data("action");
+                
+                if (action === "cancel" && !confirm("Cancel this item?")) return;
+                
+                $btn.prop("disabled", true);
+                
+                $.post(flmData.ajaxUrl, {
+                    action: "flm_queue_" + action,
+                    nonce: flmData.nonce,
+                    queue_id: id
+                }, function(response) {
+                    if (response.success) {
+                        showToast(response.data.message, "success");
+                        self.loadQueue();
+                    } else {
+                        showToast(response.data.message || "Error", "error");
+                    }
+                }).always(function() {
+                    $btn.prop("disabled", false);
+                });
+            });
+            
+            // Sync engagement button
+            $("#flm-sync-engagement").on("click", function() {
+                var $btn = $(this);
+                $btn.prop("disabled", true).html(flmIcons.spinner + " Syncing...");
+                
+                $.post(flmData.ajaxUrl, {
+                    action: "flm_sync_engagement_now",
+                    nonce: flmData.nonce
+                }, function(response) {
+                    if (response.success) {
+                        showToast("Engagement synced", "success");
+                        self.loadEngagement();
+                    } else {
+                        showToast(response.data.message || "Sync failed", "error");
+                    }
+                }).always(function() {
+                    $btn.prop("disabled", false).html(flmIcons.refresh + " Sync Now");
+                });
+            });
+        },
+        
+        loadQueue: function() {
+            var self = this;
+            var status = $("#flm-queue-filter-status").val();
+            var platform = $("#flm-queue-filter-platform").val();
+            
+            $.post(flmData.ajaxUrl, {
+                action: "flm_queue_get_all",
+                nonce: flmData.nonce,
+                status: status,
+                platform: platform
+            }, function(response) {
+                if (response.success) {
+                    self.renderQueue(response.data.queue);
+                    self.updateStats(response.data.stats);
+                }
+            });
+        },
+        
+        renderQueue: function(items) {
+            var $tbody = $("#flm-queue-tbody");
+            
+            if (!items || items.length === 0) {
+                $tbody.html("<tr><td colspan=\"6\" style=\"padding:48px;text-align:center;color:var(--flm-text-muted);\"><div style=\"font-size:36px;margin-bottom:12px;\">📭</div><div>Queue is empty. Posts will appear here when scheduled for social sharing.</div></td></tr>");
+                return;
+            }
+            
+            var html = "";
+            items.forEach(function(item) {
+                var platformIcon = item.platform === "twitter" ? "𝕏" : (item.platform === "facebook" ? "f" : "📷");
+                var scheduled = item.scheduled_at ? new Date(item.scheduled_at).toLocaleString() : "Immediate";
+                var statusBadge = "<span style=\"display:inline-block;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:500;background:" + (item.status_color || "#6b7280") + ";color:#fff;\">" + (item.status_label || item.status) + "</span>";
+                
+                var actions = "";
+                if (item.status === "failed") {
+                    actions += "<button class=\"flm-btn flm-btn-sm flm-btn-secondary flm-queue-action\" data-id=\"" + item.id + "\" data-action=\"retry\" title=\"Retry\">↻</button> ";
+                }
+                if (item.status === "pending_approval") {
+                    actions += "<button class=\"flm-btn flm-btn-sm flm-btn-success flm-queue-action\" data-id=\"" + item.id + "\" data-action=\"approve\" title=\"Approve\">✓</button> ";
+                }
+                if (item.status !== "completed" && item.status !== "cancelled") {
+                    actions += "<button class=\"flm-btn flm-btn-sm flm-btn-ghost flm-queue-action\" data-id=\"" + item.id + "\" data-action=\"cancel\" title=\"Cancel\" style=\"color:#ef4444;\">✕</button>";
+                }
+                
+                html += "<tr style=\"border-bottom:1px solid var(--flm-border);\">";
+                html += "<td style=\"padding:12px 16px;\"><input type=\"checkbox\" class=\"flm-queue-checkbox\" data-id=\"" + item.id + "\"></td>";
+                html += "<td style=\"padding:12px 16px;\"><a href=\"" + (item.edit_url || "#") + "\" style=\"color:var(--flm-text);text-decoration:none;font-weight:500;\" title=\"" + (item.headline || item.post_title || "") + "\">" + ((item.headline || item.post_title || "Untitled").substring(0, 50)) + (((item.headline || item.post_title || "").length > 50) ? "..." : "") + "</a><div style=\"font-size:11px;color:var(--flm-text-muted);margin-top:2px;\">" + (item.team_key || "") + "</div></td>";
+                html += "<td style=\"padding:12px 16px;\"><span style=\"font-size:18px;\" title=\"" + item.platform + "\">" + platformIcon + "</span></td>";
+                html += "<td style=\"padding:12px 16px;\">" + statusBadge + (item.last_error ? "<div style=\"font-size:10px;color:#ef4444;margin-top:4px;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;\" title=\"" + item.last_error + "\">" + item.last_error + "</div>" : "") + "</td>";
+                html += "<td style=\"padding:12px 16px;font-size:12px;color:var(--flm-text-muted);\">" + scheduled + "</td>";
+                html += "<td style=\"padding:12px 16px;text-align:right;\">" + actions + "</td>";
+                html += "</tr>";
+            });
+            
+            $tbody.html(html);
+        },
+        
+        updateStats: function(stats) {
+            if (!stats) return;
+            $("#queue-stat-pending").text(stats.pending || 0);
+            $("#queue-stat-scheduled").text(stats.scheduled || 0);
+            $("#queue-stat-completed").text(stats.completed || 0);
+            $("#queue-stat-failed").text(stats.failed || 0);
+        },
+        
+        updateSelectedCount: function() {
+            var count = $(".flm-queue-checkbox:checked").length;
+            $("#flm-queue-selected-count").text(count);
+            $(".flm-queue-bulk-actions").toggle(count > 0);
+        },
+        
+        loadEngagement: function() {
+            $.post(flmData.ajaxUrl, {
+                action: "flm_get_engagement_metrics",
+                nonce: flmData.nonce,
+                days: 7
+            }, function(response) {
+                if (response.success && response.data.totals) {
+                    var t = response.data.totals;
+                    $("#engagement-impressions").text(t.impressions ? t.impressions.toLocaleString() : "--");
+                    $("#engagement-likes").text(t.likes ? t.likes.toLocaleString() : "--");
+                    $("#engagement-retweets").text(t.retweets ? t.retweets.toLocaleString() : "--");
+                    $("#engagement-rate").text(t.engagement_rate ? t.engagement_rate + "%" : "--");
+                    
+                    if (response.data.last_sync) {
+                        $("#engagement-last-sync").text("Last sync: " + new Date(response.data.last_sync).toLocaleString());
+                    }
+                }
+            });
+        }
+    };
+    
+    // Initialize Queue Manager
+    QueueManager.init();
+    
     // Initialize wizard
     SetupWizard.init();
     
@@ -18143,6 +18450,73 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
             $settings['github_token'] = $old_settings['github_token'] ?? '';
         }
         
+        // v2.21.0: Queue System Settings - preserve if not in form
+        $queue_form_submitted = isset($post_data['queue_enabled']) || isset($post_data['queue_auto_process']);
+        if ($queue_form_submitted) {
+            $settings['queue_enabled'] = !empty($post_data['queue_enabled']);
+            $settings['queue_auto_process'] = !empty($post_data['queue_auto_process']);
+            $valid_intervals = ['every5min', 'every15min', 'every30min', 'hourly'];
+            $interval = sanitize_text_field($post_data['queue_process_interval'] ?? 'every5min');
+            $settings['queue_process_interval'] = in_array($interval, $valid_intervals) ? $interval : 'every5min';
+            $settings['queue_max_retries'] = min(10, max(1, absint($post_data['queue_max_retries'] ?? 3)));
+            $settings['queue_retry_delay'] = min(3600, max(60, absint($post_data['queue_retry_delay'] ?? 300)));
+            $settings['queue_require_approval'] = !empty($post_data['queue_require_approval']);
+            $settings['queue_optimal_times'] = !empty($post_data['queue_optimal_times']);
+            $settings['queue_batch_size'] = min(20, max(1, absint($post_data['queue_batch_size'] ?? 5)));
+        } else {
+            $settings['queue_enabled'] = $old_settings['queue_enabled'] ?? true;
+            $settings['queue_auto_process'] = $old_settings['queue_auto_process'] ?? true;
+            $settings['queue_process_interval'] = $old_settings['queue_process_interval'] ?? 'every5min';
+            $settings['queue_max_retries'] = $old_settings['queue_max_retries'] ?? 3;
+            $settings['queue_retry_delay'] = $old_settings['queue_retry_delay'] ?? 300;
+            $settings['queue_require_approval'] = $old_settings['queue_require_approval'] ?? false;
+            $settings['queue_optimal_times'] = $old_settings['queue_optimal_times'] ?? true;
+            $settings['queue_batch_size'] = $old_settings['queue_batch_size'] ?? 5;
+        }
+        
+        // v2.21.0: Engagement Tracking Settings - preserve if not in form
+        $engagement_form_submitted = isset($post_data['engagement_tracking_enabled']) || isset($post_data['engagement_sync_interval']);
+        if ($engagement_form_submitted) {
+            $settings['engagement_tracking_enabled'] = !empty($post_data['engagement_tracking_enabled']);
+            $valid_sync_intervals = ['every15min', 'every30min', 'hourly', 'twicedaily'];
+            $sync_interval = sanitize_text_field($post_data['engagement_sync_interval'] ?? 'hourly');
+            $settings['engagement_sync_interval'] = in_array($sync_interval, $valid_sync_intervals) ? $sync_interval : 'hourly';
+            $settings['engagement_track_impressions'] = !empty($post_data['engagement_track_impressions']);
+            $settings['engagement_track_clicks'] = !empty($post_data['engagement_track_clicks']);
+            $settings['engagement_track_retweets'] = !empty($post_data['engagement_track_retweets']);
+            $settings['engagement_track_likes'] = !empty($post_data['engagement_track_likes']);
+            $settings['engagement_track_replies'] = !empty($post_data['engagement_track_replies']);
+            $settings['engagement_history_days'] = min(90, max(7, absint($post_data['engagement_history_days'] ?? 30)));
+            $settings['twitter_upload_images'] = !empty($post_data['twitter_upload_images']);
+        } else {
+            $settings['engagement_tracking_enabled'] = $old_settings['engagement_tracking_enabled'] ?? true;
+            $settings['engagement_sync_interval'] = $old_settings['engagement_sync_interval'] ?? 'hourly';
+            $settings['engagement_track_impressions'] = $old_settings['engagement_track_impressions'] ?? true;
+            $settings['engagement_track_clicks'] = $old_settings['engagement_track_clicks'] ?? true;
+            $settings['engagement_track_retweets'] = $old_settings['engagement_track_retweets'] ?? true;
+            $settings['engagement_track_likes'] = $old_settings['engagement_track_likes'] ?? true;
+            $settings['engagement_track_replies'] = $old_settings['engagement_track_replies'] ?? true;
+            $settings['engagement_history_days'] = $old_settings['engagement_history_days'] ?? 30;
+            $settings['twitter_upload_images'] = $old_settings['twitter_upload_images'] ?? true;
+        }
+        
+        // Reschedule crons if queue/engagement settings changed
+        if (($settings['queue_enabled'] ?? false) !== ($old_settings['queue_enabled'] ?? false) ||
+            ($settings['queue_process_interval'] ?? '') !== ($old_settings['queue_process_interval'] ?? '')) {
+            wp_clear_scheduled_hook('flm_process_social_queue');
+            if (!empty($settings['queue_enabled']) && !empty($settings['queue_auto_process'])) {
+                wp_schedule_event(time(), $settings['queue_process_interval'], 'flm_process_social_queue');
+            }
+        }
+        
+        if (($settings['engagement_tracking_enabled'] ?? false) !== ($old_settings['engagement_tracking_enabled'] ?? false) ||
+            ($settings['engagement_sync_interval'] ?? '') !== ($old_settings['engagement_sync_interval'] ?? '')) {
+            wp_clear_scheduled_hook('flm_sync_engagement_metrics');
+            if (!empty($settings['engagement_tracking_enabled'])) {
+                wp_schedule_event(time(), $settings['engagement_sync_interval'], 'flm_sync_engagement_metrics');
+            }
+        }
+        
         // ALWAYS preserve OAuth tokens and Google credentials (never in regular forms)
         // These are managed by dedicated AJAX handlers
         $settings['google_client_id'] = $old_settings['google_client_id'] ?? '';
@@ -18351,26 +18725,1186 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
             wp_send_json_error(['message' => 'Permission denied']);
         }
         
-        $queue = get_option('flm_social_queue', []);
+        // v2.21.0: Use database table if available
+        $queue = $this->get_queue_items();
         
-        // Enrich with post data
+        wp_send_json_success(['queue' => $queue]);
+    }
+    
+    // ========================================
+    // PHASE 1: SOCIAL INFRASTRUCTURE (v2.21.0)
+    // ========================================
+    
+    /**
+     * Database version for upgrade tracking
+     */
+    private $db_version = '2.21.0';
+    
+    /**
+     * Maybe upgrade database on plugin load
+     */
+    public function maybe_upgrade_database() {
+        $installed_version = get_option('flm_db_version', '0');
+        
+        if (version_compare($installed_version, $this->db_version, '<')) {
+            $this->create_database_tables();
+            update_option('flm_db_version', $this->db_version);
+        }
+        
+        // Schedule queue processing if enabled
+        $settings = $this->get_settings();
+        if (!empty($settings['queue_enabled']) && !empty($settings['queue_auto_process'])) {
+            $interval = $settings['queue_process_interval'] ?? 'every5min';
+            if (!wp_next_scheduled('flm_process_social_queue')) {
+                wp_schedule_event(time(), $interval, 'flm_process_social_queue');
+            }
+        }
+        
+        // Schedule engagement sync if enabled
+        if (!empty($settings['engagement_tracking_enabled'])) {
+            $interval = $settings['engagement_sync_interval'] ?? 'hourly';
+            if (!wp_next_scheduled('flm_sync_engagement_metrics')) {
+                wp_schedule_event(time(), $interval, 'flm_sync_engagement_metrics');
+            }
+        }
+    }
+    
+    /**
+     * Create database tables for queue and engagement tracking
+     */
+    private function create_database_tables() {
+        global $wpdb;
+        
+        $charset_collate = $wpdb->get_charset_collate();
+        
+        // Social Queue Table
+        $table_queue = $wpdb->prefix . 'flm_social_queue';
+        $sql_queue = "CREATE TABLE $table_queue (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            post_id bigint(20) unsigned NOT NULL,
+            platform varchar(20) NOT NULL DEFAULT 'twitter',
+            status varchar(20) NOT NULL DEFAULT 'pending',
+            headline text NOT NULL,
+            content text,
+            image_url varchar(500),
+            team_key varchar(50),
+            scheduled_at datetime DEFAULT NULL,
+            processed_at datetime DEFAULT NULL,
+            external_id varchar(100),
+            retry_count int(11) NOT NULL DEFAULT 0,
+            last_error text,
+            created_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY post_id (post_id),
+            KEY platform (platform),
+            KEY status (status),
+            KEY scheduled_at (scheduled_at)
+        ) $charset_collate;";
+        
+        // Engagement Metrics Table
+        $table_engagement = $wpdb->prefix . 'flm_engagement_metrics';
+        $sql_engagement = "CREATE TABLE $table_engagement (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            post_id bigint(20) unsigned NOT NULL,
+            platform varchar(20) NOT NULL,
+            external_id varchar(100) NOT NULL,
+            impressions bigint(20) unsigned DEFAULT 0,
+            clicks bigint(20) unsigned DEFAULT 0,
+            likes bigint(20) unsigned DEFAULT 0,
+            retweets bigint(20) unsigned DEFAULT 0,
+            replies bigint(20) unsigned DEFAULT 0,
+            engagement_rate decimal(5,2) DEFAULT 0.00,
+            recorded_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY post_id (post_id),
+            KEY platform (platform),
+            KEY external_id (external_id),
+            KEY recorded_at (recorded_at)
+        ) $charset_collate;";
+        
+        require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
+        dbDelta($sql_queue);
+        dbDelta($sql_engagement);
+        
+        // Migrate old queue data from wp_option
+        $old_queue = get_option('flm_social_queue', []);
+        if (!empty($old_queue)) {
+            foreach ($old_queue as $post_id => $data) {
+                $wpdb->insert($table_queue, [
+                    'post_id' => $post_id,
+                    'platform' => 'twitter',
+                    'status' => 'pending',
+                    'headline' => $data['headline'] ?? '',
+                    'team_key' => $data['team_key'] ?? '',
+                    'created_at' => $data['queued_at'] ?? current_time('mysql'),
+                ]);
+            }
+            delete_option('flm_social_queue');
+        }
+    }
+    
+    /**
+     * Add item to social queue
+     */
+    public function add_to_queue($post_id, $platform, $headline, $content = '', $image_url = '', $team_key = '', $scheduled_at = null) {
+        global $wpdb;
+        $table = $wpdb->prefix . 'flm_social_queue';
+        
+        $settings = $this->get_settings();
+        $status = !empty($settings['queue_require_approval']) ? 'pending_approval' : 'pending';
+        
+        // Auto-schedule for optimal time if enabled
+        if (empty($scheduled_at) && !empty($settings['queue_optimal_times'])) {
+            $scheduled_at = $this->get_next_optimal_time($platform);
+        }
+        
+        $result = $wpdb->insert($table, [
+            'post_id' => $post_id,
+            'platform' => $platform,
+            'status' => $status,
+            'headline' => $headline,
+            'content' => $content,
+            'image_url' => $image_url,
+            'team_key' => $team_key,
+            'scheduled_at' => $scheduled_at,
+            'created_at' => current_time('mysql'),
+        ], ['%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s']);
+        
+        if ($result) {
+            $this->log_activity('queue', "Added to {$platform} queue: " . substr($headline, 0, 50) . '...', [
+                'post_id' => $post_id,
+                'team' => $team_key,
+            ]);
+            return $wpdb->insert_id;
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Get queue items with optional filtering
+     */
+    public function get_queue_items($status = null, $platform = null, $limit = 100) {
+        global $wpdb;
+        $table = $wpdb->prefix . 'flm_social_queue';
+        
+        // Check if table exists, fallback to old system
+        if ($wpdb->get_var("SHOW TABLES LIKE '$table'") !== $table) {
+            return $this->get_legacy_queue_items();
+        }
+        
+        $where = ['1=1'];
+        $args = [];
+        
+        if ($status) {
+            $where[] = 'q.status = %s';
+            $args[] = $status;
+        }
+        
+        if ($platform) {
+            $where[] = 'q.platform = %s';
+            $args[] = $platform;
+        }
+        
+        $where_sql = implode(' AND ', $where);
+        
+        $sql = "SELECT q.*, p.post_title, p.post_status as wp_status
+                FROM $table q
+                LEFT JOIN {$wpdb->posts} p ON q.post_id = p.ID
+                WHERE $where_sql
+                ORDER BY q.scheduled_at ASC, q.created_at ASC
+                LIMIT %d";
+        
+        $args[] = $limit;
+        
+        $items = $wpdb->get_results($wpdb->prepare($sql, ...$args), ARRAY_A);
+        
+        // Enrich with additional data
+        foreach ($items as &$item) {
+            $item['edit_url'] = get_edit_post_link($item['post_id'], 'raw');
+            $item['view_url'] = get_permalink($item['post_id']);
+            $item['status_label'] = $this->get_queue_status_label($item['status']);
+            $item['status_color'] = $this->get_queue_status_color($item['status']);
+            $item['platform_icon'] = $item['platform'] === 'twitter' ? '𝕏' : ($item['platform'] === 'facebook' ? 'f' : '📷');
+        }
+        
+        return $items;
+    }
+    
+    /**
+     * Legacy queue getter for backwards compatibility
+     */
+    private function get_legacy_queue_items() {
+        $queue = get_option('flm_social_queue', []);
         $enriched = [];
+        
         foreach ($queue as $post_id => $data) {
             $post = get_post($post_id);
             if ($post) {
                 $enriched[] = [
+                    'id' => $post_id,
                     'post_id' => $post_id,
-                    'title' => $post->post_title,
-                    'status' => $post->post_status,
+                    'post_title' => $post->post_title,
+                    'wp_status' => $post->post_status,
+                    'platform' => 'twitter',
+                    'status' => 'pending',
+                    'headline' => $data['headline'] ?? $post->post_title,
+                    'team_key' => $data['team_key'] ?? '',
+                    'created_at' => $data['queued_at'] ?? '',
                     'edit_url' => get_edit_post_link($post_id, 'raw'),
-                    'team' => $data['team_key'] ?? '',
-                    'queued_at' => $data['queued_at'] ?? '',
+                    'status_label' => 'Pending',
+                    'status_color' => '#f59e0b',
                 ];
             }
         }
         
-        wp_send_json_success(['queue' => $enriched]);
+        return $enriched;
     }
+    
+    /**
+     * Get human-readable queue status label
+     */
+    private function get_queue_status_label($status) {
+        $labels = [
+            'pending' => 'Pending',
+            'pending_approval' => 'Awaiting Approval',
+            'scheduled' => 'Scheduled',
+            'processing' => 'Processing',
+            'completed' => 'Posted',
+            'failed' => 'Failed',
+            'cancelled' => 'Cancelled',
+        ];
+        return $labels[$status] ?? ucfirst($status);
+    }
+    
+    /**
+     * Get queue status color
+     */
+    private function get_queue_status_color($status) {
+        $colors = [
+            'pending' => '#f59e0b',
+            'pending_approval' => '#8b5cf6',
+            'scheduled' => '#3b82f6',
+            'processing' => '#06b6d4',
+            'completed' => '#10b981',
+            'failed' => '#ef4444',
+            'cancelled' => '#6b7280',
+        ];
+        return $colors[$status] ?? '#6b7280';
+    }
+    
+    /**
+     * Get next optimal posting time based on settings
+     */
+    private function get_next_optimal_time($platform) {
+        $settings = $this->get_settings();
+        $times_key = "best_times_{$platform}";
+        $best_times = $settings[$times_key] ?? ['09:00', '12:00', '17:00'];
+        
+        if (empty($best_times) || !is_array($best_times)) {
+            return null;
+        }
+        
+        $now = current_time('timestamp');
+        $today = date('Y-m-d', $now);
+        $tomorrow = date('Y-m-d', strtotime('+1 day', $now));
+        
+        // Find next available time slot
+        foreach ($best_times as $time) {
+            $datetime = strtotime("$today $time");
+            if ($datetime > $now + 300) { // At least 5 min in future
+                return date('Y-m-d H:i:s', $datetime);
+            }
+        }
+        
+        // All today's slots passed, use first tomorrow slot
+        $first_time = $best_times[0];
+        return date('Y-m-d H:i:s', strtotime("$tomorrow $first_time"));
+    }
+    
+    /**
+     * Process social queue (cron callback)
+     */
+    public function process_social_queue() {
+        $settings = $this->get_settings();
+        
+        if (empty($settings['queue_enabled']) || empty($settings['queue_auto_process'])) {
+            return;
+        }
+        
+        global $wpdb;
+        $table = $wpdb->prefix . 'flm_social_queue';
+        
+        // Check if table exists
+        if ($wpdb->get_var("SHOW TABLES LIKE '$table'") !== $table) {
+            return;
+        }
+        
+        $batch_size = $settings['queue_batch_size'] ?? 5;
+        $max_retries = $settings['queue_max_retries'] ?? 3;
+        
+        // Get items ready to process
+        $items = $wpdb->get_results($wpdb->prepare(
+            "SELECT * FROM $table 
+             WHERE status IN ('pending', 'scheduled') 
+             AND (scheduled_at IS NULL OR scheduled_at <= %s)
+             AND retry_count < %d
+             ORDER BY scheduled_at ASC, created_at ASC 
+             LIMIT %d",
+            current_time('mysql'),
+            $max_retries,
+            $batch_size
+        ), ARRAY_A);
+        
+        if (empty($items)) {
+            return;
+        }
+        
+        foreach ($items as $item) {
+            $this->process_queue_item($item);
+        }
+        
+        $this->log_activity('queue', "Processed " . count($items) . " queue items");
+    }
+    
+    /**
+     * Process a single queue item
+     */
+    private function process_queue_item($item) {
+        global $wpdb;
+        $table = $wpdb->prefix . 'flm_social_queue';
+        
+        // Mark as processing
+        $wpdb->update($table, ['status' => 'processing'], ['id' => $item['id']]);
+        
+        $post = get_post($item['post_id']);
+        if (!$post || $post->post_status !== 'publish') {
+            $wpdb->update($table, [
+                'status' => 'cancelled',
+                'last_error' => 'Post not published or deleted',
+            ], ['id' => $item['id']]);
+            return;
+        }
+        
+        $post_url = get_permalink($item['post_id']);
+        $image_url = $item['image_url'];
+        
+        // Get featured image if not specified
+        if (empty($image_url)) {
+            $thumb_id = get_post_thumbnail_id($item['post_id']);
+            if ($thumb_id) {
+                $image_url = wp_get_attachment_url($thumb_id);
+            }
+        }
+        
+        $result = ['success' => false, 'error' => 'Unknown platform'];
+        
+        switch ($item['platform']) {
+            case 'twitter':
+                $result = $this->post_to_twitter_v2_with_media(
+                    $item['post_id'],
+                    $item['headline'],
+                    $post_url,
+                    $item['team_key'],
+                    $image_url
+                );
+                break;
+                
+            case 'facebook':
+                $result = $this->post_to_facebook(
+                    $item['post_id'],
+                    $item['headline'],
+                    $post_url,
+                    $item['team_key']
+                );
+                break;
+                
+            case 'instagram':
+                $result = $this->post_to_instagram(
+                    $item['post_id'],
+                    $item['headline'],
+                    $image_url
+                );
+                break;
+        }
+        
+        if ($result['success']) {
+            $wpdb->update($table, [
+                'status' => 'completed',
+                'processed_at' => current_time('mysql'),
+                'external_id' => $result['tweet_id'] ?? $result['post_id'] ?? '',
+                'last_error' => null,
+            ], ['id' => $item['id']]);
+            
+            // Store external ID in post meta for engagement tracking
+            update_post_meta($item['post_id'], "_flm_{$item['platform']}_id", $result['tweet_id'] ?? $result['post_id'] ?? '');
+            update_post_meta($item['post_id'], "_flm_{$item['platform']}_posted_at", current_time('mysql'));
+            
+            $this->log_social_activity($item['platform'], $item['post_id'], $result);
+        } else {
+            $settings = $this->get_settings();
+            $retry_delay = $settings['queue_retry_delay'] ?? 300;
+            
+            $new_status = ($item['retry_count'] + 1 >= ($settings['queue_max_retries'] ?? 3)) ? 'failed' : 'pending';
+            $scheduled_at = ($new_status === 'pending') ? date('Y-m-d H:i:s', time() + $retry_delay) : null;
+            
+            $wpdb->update($table, [
+                'status' => $new_status,
+                'retry_count' => $item['retry_count'] + 1,
+                'last_error' => $result['error'] ?? 'Unknown error',
+                'scheduled_at' => $scheduled_at,
+            ], ['id' => $item['id']]);
+            
+            $this->log_social_activity($item['platform'], $item['post_id'], $result);
+        }
+    }
+    
+    /**
+     * Post to Twitter with media upload support
+     */
+    private function post_to_twitter_v2_with_media($post_id, $text, $url, $team_key, $image_url = '') {
+        $access_token = $this->get_twitter_access_token();
+        
+        if (!$access_token) {
+            return ['success' => false, 'error' => 'Twitter not connected or token expired'];
+        }
+        
+        $settings = $this->get_settings();
+        
+        // Build tweet text from template
+        $template = $settings['twitter_post_template'] ?? '📰 {headline} #Atlanta #Sports {team_hashtag}';
+        $team_config = $this->target_teams[$team_key] ?? [];
+        $tracked_url = $this->build_utm_url($url, 'twitter', $team_key);
+        
+        $team_hashtags = [
+            'braves' => '#Braves #ForTheA',
+            'falcons' => '#Falcons #RiseUp',
+            'hawks' => '#Hawks #TrueToAtlanta',
+            'united' => '#ATLUTD #UniteAndConquer',
+            'dream' => '#AtlantaDream #DreamOn',
+            'uga' => '#UGA #GoDawgs',
+            'gt' => '#GaTech #TogetherWeSwarm',
+            'faze' => '#FaZeUp #AtlantaFaZe',
+            'reign' => '#ATLReign #OverwatchLeague',
+        ];
+        
+        $tweet_text = str_replace([
+            '{headline}',
+            '{url}',
+            '{team}',
+            '{team_hashtag}',
+            '{league}',
+        ], [
+            $text,
+            $tracked_url,
+            $team_config['name'] ?? '',
+            $team_hashtags[$team_key] ?? '#Atlanta',
+            $team_config['league'] ?? '',
+        ], $template);
+        
+        // Append URL if not in template
+        if (strpos($tweet_text, 'http') === false) {
+            if (strlen($tweet_text) > 254) {
+                $tweet_text = substr($tweet_text, 0, 251) . '...';
+            }
+            $tweet_text .= "\n\n" . $tracked_url;
+        }
+        
+        // Truncate to 280 chars
+        if (strlen($tweet_text) > 280) {
+            $tweet_text = substr($tweet_text, 0, 277) . '...';
+        }
+        
+        // Upload media if enabled and available
+        $media_ids = [];
+        if (!empty($image_url) && !empty($settings['twitter_upload_images'])) {
+            $media_result = $this->upload_twitter_media($image_url, $access_token);
+            if ($media_result['success'] && !empty($media_result['media_id'])) {
+                $media_ids[] = $media_result['media_id'];
+            }
+        }
+        
+        // Build tweet payload
+        $payload = ['text' => $tweet_text];
+        if (!empty($media_ids)) {
+            $payload['media'] = ['media_ids' => $media_ids];
+        }
+        
+        // Post tweet
+        $response = wp_remote_post('https://api.twitter.com/2/tweets', [
+            'headers' => [
+                'Authorization' => 'Bearer ' . $access_token,
+                'Content-Type' => 'application/json',
+            ],
+            'body' => json_encode($payload),
+            'timeout' => 30,
+        ]);
+        
+        if (is_wp_error($response)) {
+            return ['success' => false, 'error' => $response->get_error_message()];
+        }
+        
+        $code = wp_remote_retrieve_response_code($response);
+        $body = json_decode(wp_remote_retrieve_body($response), true);
+        
+        if ($code === 201 && isset($body['data']['id'])) {
+            $this->log_activity('social', "Posted to Twitter: " . substr($tweet_text, 0, 50) . '...');
+            return [
+                'success' => true,
+                'tweet_id' => $body['data']['id'],
+                'tweet_text' => $tweet_text,
+            ];
+        }
+        
+        $error = $body['detail'] ?? $body['errors'][0]['message'] ?? "Twitter API error (HTTP $code)";
+        return ['success' => false, 'error' => $error, 'code' => $code];
+    }
+    
+    /**
+     * Upload media to Twitter
+     */
+    private function upload_twitter_media($image_url, $access_token) {
+        // Download image
+        $response = wp_remote_get($image_url, ['timeout' => 30]);
+        
+        if (is_wp_error($response)) {
+            return ['success' => false, 'error' => 'Failed to download image: ' . $response->get_error_message()];
+        }
+        
+        $image_data = wp_remote_retrieve_body($response);
+        $content_type = wp_remote_retrieve_header($response, 'content-type');
+        
+        if (empty($image_data)) {
+            return ['success' => false, 'error' => 'Empty image data'];
+        }
+        
+        $settings = $this->get_settings();
+        $max_size = $settings['twitter_max_image_size'] ?? 5242880;
+        
+        if (strlen($image_data) > $max_size) {
+            return ['success' => false, 'error' => 'Image too large (max 5MB)'];
+        }
+        
+        // Twitter media upload requires OAuth 1.0a, which we're using for media
+        // For OAuth 2.0, we need to use the v1.1 endpoint with app auth
+        // Note: Twitter API v2 doesn't fully support media upload yet with OAuth 2.0
+        // This is a limitation - for full media support, we'd need OAuth 1.0a
+        
+        // For now, return success without media_id since OAuth 2.0 media upload is limited
+        return ['success' => false, 'error' => 'Media upload requires OAuth 1.0a (coming in v2.22.0)'];
+    }
+    
+    /**
+     * AJAX: Get all queue items
+     */
+    public function ajax_queue_get_all() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Permission denied']);
+        }
+        
+        $status = isset($_POST['status']) ? sanitize_text_field($_POST['status']) : null;
+        $platform = isset($_POST['platform']) ? sanitize_text_field($_POST['platform']) : null;
+        
+        $items = $this->get_queue_items($status, $platform);
+        
+        // Get queue stats
+        global $wpdb;
+        $table = $wpdb->prefix . 'flm_social_queue';
+        
+        $stats = [
+            'pending' => 0,
+            'scheduled' => 0,
+            'completed' => 0,
+            'failed' => 0,
+            'total' => 0,
+        ];
+        
+        if ($wpdb->get_var("SHOW TABLES LIKE '$table'") === $table) {
+            $counts = $wpdb->get_results("SELECT status, COUNT(*) as count FROM $table GROUP BY status", ARRAY_A);
+            foreach ($counts as $row) {
+                $stats[$row['status']] = intval($row['count']);
+                $stats['total'] += intval($row['count']);
+            }
+        }
+        
+        wp_send_json_success([
+            'queue' => $items,
+            'stats' => $stats,
+        ]);
+    }
+    
+    /**
+     * AJAX: Retry failed queue item
+     */
+    public function ajax_queue_retry() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Permission denied']);
+        }
+        
+        $queue_id = isset($_POST['queue_id']) ? intval($_POST['queue_id']) : 0;
+        
+        if (!$queue_id) {
+            wp_send_json_error(['message' => 'Invalid queue ID']);
+        }
+        
+        global $wpdb;
+        $table = $wpdb->prefix . 'flm_social_queue';
+        
+        $result = $wpdb->update($table, [
+            'status' => 'pending',
+            'retry_count' => 0,
+            'scheduled_at' => current_time('mysql'),
+            'last_error' => null,
+        ], ['id' => $queue_id]);
+        
+        if ($result !== false) {
+            $this->log_activity('queue', "Retrying queue item #$queue_id");
+            wp_send_json_success(['message' => 'Item queued for retry']);
+        } else {
+            wp_send_json_error(['message' => 'Failed to update queue item']);
+        }
+    }
+    
+    /**
+     * AJAX: Cancel queue item
+     */
+    public function ajax_queue_cancel() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Permission denied']);
+        }
+        
+        $queue_id = isset($_POST['queue_id']) ? intval($_POST['queue_id']) : 0;
+        
+        if (!$queue_id) {
+            wp_send_json_error(['message' => 'Invalid queue ID']);
+        }
+        
+        global $wpdb;
+        $table = $wpdb->prefix . 'flm_social_queue';
+        
+        $result = $wpdb->update($table, [
+            'status' => 'cancelled',
+        ], ['id' => $queue_id]);
+        
+        if ($result !== false) {
+            $this->log_activity('queue', "Cancelled queue item #$queue_id");
+            wp_send_json_success(['message' => 'Item cancelled']);
+        } else {
+            wp_send_json_error(['message' => 'Failed to cancel item']);
+        }
+    }
+    
+    /**
+     * AJAX: Approve pending queue item
+     */
+    public function ajax_queue_approve() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Permission denied']);
+        }
+        
+        $queue_id = isset($_POST['queue_id']) ? intval($_POST['queue_id']) : 0;
+        
+        if (!$queue_id) {
+            wp_send_json_error(['message' => 'Invalid queue ID']);
+        }
+        
+        global $wpdb;
+        $table = $wpdb->prefix . 'flm_social_queue';
+        
+        $result = $wpdb->update($table, [
+            'status' => 'pending',
+        ], ['id' => $queue_id, 'status' => 'pending_approval']);
+        
+        if ($result !== false) {
+            $this->log_activity('queue', "Approved queue item #$queue_id");
+            wp_send_json_success(['message' => 'Item approved for posting']);
+        } else {
+            wp_send_json_error(['message' => 'Failed to approve item']);
+        }
+    }
+    
+    /**
+     * AJAX: Reschedule queue item
+     */
+    public function ajax_queue_reschedule() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Permission denied']);
+        }
+        
+        $queue_id = isset($_POST['queue_id']) ? intval($_POST['queue_id']) : 0;
+        $scheduled_at = isset($_POST['scheduled_at']) ? sanitize_text_field($_POST['scheduled_at']) : '';
+        
+        if (!$queue_id || empty($scheduled_at)) {
+            wp_send_json_error(['message' => 'Invalid parameters']);
+        }
+        
+        global $wpdb;
+        $table = $wpdb->prefix . 'flm_social_queue';
+        
+        $result = $wpdb->update($table, [
+            'status' => 'scheduled',
+            'scheduled_at' => $scheduled_at,
+        ], ['id' => $queue_id]);
+        
+        if ($result !== false) {
+            $this->log_activity('queue', "Rescheduled queue item #$queue_id to $scheduled_at");
+            wp_send_json_success(['message' => 'Item rescheduled']);
+        } else {
+            wp_send_json_error(['message' => 'Failed to reschedule item']);
+        }
+    }
+    
+    /**
+     * AJAX: Clear completed queue items
+     */
+    public function ajax_queue_clear_completed() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Permission denied']);
+        }
+        
+        global $wpdb;
+        $table = $wpdb->prefix . 'flm_social_queue';
+        
+        $deleted = $wpdb->delete($table, ['status' => 'completed']);
+        $wpdb->delete($table, ['status' => 'cancelled']);
+        
+        $this->log_activity('queue', "Cleared completed/cancelled queue items");
+        
+        wp_send_json_success(['message' => "Cleared completed items", 'deleted' => $deleted]);
+    }
+    
+    /**
+     * AJAX: Bulk queue action
+     */
+    public function ajax_queue_bulk_action() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Permission denied']);
+        }
+        
+        $action = isset($_POST['bulk_action']) ? sanitize_text_field($_POST['bulk_action']) : '';
+        $ids = isset($_POST['ids']) ? array_map('intval', (array)$_POST['ids']) : [];
+        
+        if (empty($action) || empty($ids)) {
+            wp_send_json_error(['message' => 'Invalid parameters']);
+        }
+        
+        global $wpdb;
+        $table = $wpdb->prefix . 'flm_social_queue';
+        
+        $ids_string = implode(',', $ids);
+        $count = 0;
+        
+        switch ($action) {
+            case 'cancel':
+                $count = $wpdb->query("UPDATE $table SET status = 'cancelled' WHERE id IN ($ids_string)");
+                break;
+            case 'approve':
+                $count = $wpdb->query("UPDATE $table SET status = 'pending' WHERE id IN ($ids_string) AND status = 'pending_approval'");
+                break;
+            case 'retry':
+                $count = $wpdb->query("UPDATE $table SET status = 'pending', retry_count = 0, scheduled_at = NOW() WHERE id IN ($ids_string)");
+                break;
+            case 'delete':
+                $count = $wpdb->query("DELETE FROM $table WHERE id IN ($ids_string) AND status IN ('completed', 'cancelled', 'failed')");
+                break;
+        }
+        
+        $this->log_activity('queue', "Bulk $action on $count items");
+        
+        wp_send_json_success(['message' => "Action completed on $count items", 'affected' => $count]);
+    }
+    
+    // ========================================
+    // ENGAGEMENT TRACKING (v2.21.0)
+    // ========================================
+    
+    /**
+     * Sync engagement metrics from Twitter (cron callback)
+     */
+    public function sync_engagement_metrics() {
+        $settings = $this->get_settings();
+        
+        if (empty($settings['engagement_tracking_enabled'])) {
+            return;
+        }
+        
+        $access_token = $this->get_twitter_access_token();
+        if (!$access_token) {
+            return;
+        }
+        
+        global $wpdb;
+        
+        // Get posts with Twitter IDs from last N days
+        $days = $settings['engagement_history_days'] ?? 30;
+        $posts = $wpdb->get_results($wpdb->prepare(
+            "SELECT p.ID, pm.meta_value as tweet_id
+             FROM {$wpdb->posts} p
+             INNER JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id AND pm.meta_key = '_flm_twitter_id'
+             WHERE p.post_status = 'publish'
+             AND p.post_date > DATE_SUB(NOW(), INTERVAL %d DAY)
+             AND pm.meta_value != ''
+             ORDER BY p.post_date DESC
+             LIMIT 50",
+            $days
+        ), ARRAY_A);
+        
+        if (empty($posts)) {
+            return;
+        }
+        
+        // Batch tweet IDs (max 100 per request)
+        $tweet_ids = array_column($posts, 'tweet_id');
+        $post_map = array_column($posts, 'ID', 'tweet_id');
+        
+        // Fetch metrics from Twitter
+        $metrics = $this->fetch_twitter_metrics($tweet_ids, $access_token);
+        
+        if (empty($metrics)) {
+            return;
+        }
+        
+        // Store metrics
+        $table = $wpdb->prefix . 'flm_engagement_metrics';
+        
+        // Check if table exists
+        if ($wpdb->get_var("SHOW TABLES LIKE '$table'") !== $table) {
+            return;
+        }
+        
+        foreach ($metrics as $tweet_id => $data) {
+            $post_id = $post_map[$tweet_id] ?? 0;
+            if (!$post_id) continue;
+            
+            $wpdb->insert($table, [
+                'post_id' => $post_id,
+                'platform' => 'twitter',
+                'external_id' => $tweet_id,
+                'impressions' => $data['impressions'] ?? 0,
+                'clicks' => $data['url_link_clicks'] ?? 0,
+                'likes' => $data['likes'] ?? 0,
+                'retweets' => $data['retweets'] ?? 0,
+                'replies' => $data['replies'] ?? 0,
+                'engagement_rate' => $this->calculate_engagement_rate($data),
+                'recorded_at' => current_time('mysql'),
+            ]);
+            
+            // Also update post meta with latest metrics
+            update_post_meta($post_id, '_flm_twitter_impressions', $data['impressions'] ?? 0);
+            update_post_meta($post_id, '_flm_twitter_clicks', $data['url_link_clicks'] ?? 0);
+            update_post_meta($post_id, '_flm_twitter_likes', $data['likes'] ?? 0);
+            update_post_meta($post_id, '_flm_twitter_engagement', $this->calculate_engagement_rate($data));
+            update_post_meta($post_id, '_flm_twitter_synced_at', current_time('mysql'));
+        }
+        
+        $this->log_activity('engagement', "Synced metrics for " . count($metrics) . " tweets");
+    }
+    
+    /**
+     * Fetch metrics from Twitter API v2
+     */
+    private function fetch_twitter_metrics($tweet_ids, $access_token) {
+        if (empty($tweet_ids)) {
+            return [];
+        }
+        
+        // Twitter API v2 allows up to 100 tweet IDs per request
+        $chunks = array_chunk($tweet_ids, 100);
+        $all_metrics = [];
+        
+        foreach ($chunks as $chunk) {
+            $ids_string = implode(',', $chunk);
+            
+            $response = wp_remote_get(
+                "https://api.twitter.com/2/tweets?ids={$ids_string}&tweet.fields=public_metrics",
+                [
+                    'headers' => [
+                        'Authorization' => 'Bearer ' . $access_token,
+                    ],
+                    'timeout' => 30,
+                ]
+            );
+            
+            if (is_wp_error($response)) {
+                $this->log_error('warning', 'engagement', 'Twitter API error: ' . $response->get_error_message());
+                continue;
+            }
+            
+            $body = json_decode(wp_remote_retrieve_body($response), true);
+            
+            if (isset($body['data']) && is_array($body['data'])) {
+                foreach ($body['data'] as $tweet) {
+                    $metrics = $tweet['public_metrics'] ?? [];
+                    $all_metrics[$tweet['id']] = [
+                        'impressions' => $metrics['impression_count'] ?? 0,
+                        'likes' => $metrics['like_count'] ?? 0,
+                        'retweets' => $metrics['retweet_count'] ?? 0,
+                        'replies' => $metrics['reply_count'] ?? 0,
+                        'quotes' => $metrics['quote_count'] ?? 0,
+                        'bookmarks' => $metrics['bookmark_count'] ?? 0,
+                    ];
+                }
+            }
+        }
+        
+        return $all_metrics;
+    }
+    
+    /**
+     * Calculate engagement rate from metrics
+     */
+    private function calculate_engagement_rate($metrics) {
+        $impressions = $metrics['impressions'] ?? 0;
+        if ($impressions <= 0) return 0;
+        
+        $engagements = ($metrics['likes'] ?? 0) + 
+                       ($metrics['retweets'] ?? 0) + 
+                       ($metrics['replies'] ?? 0) + 
+                       ($metrics['url_link_clicks'] ?? 0);
+        
+        return round(($engagements / $impressions) * 100, 2);
+    }
+    
+    /**
+     * AJAX: Get engagement metrics
+     */
+    public function ajax_get_engagement_metrics() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Permission denied']);
+        }
+        
+        $days = isset($_POST['days']) ? intval($_POST['days']) : 7;
+        
+        global $wpdb;
+        $table = $wpdb->prefix . 'flm_engagement_metrics';
+        
+        // Check if table exists
+        if ($wpdb->get_var("SHOW TABLES LIKE '$table'") !== $table) {
+            wp_send_json_success($this->get_mock_engagement_data());
+            return;
+        }
+        
+        // Get aggregated metrics
+        $totals = $wpdb->get_row($wpdb->prepare(
+            "SELECT 
+                SUM(impressions) as total_impressions,
+                SUM(clicks) as total_clicks,
+                SUM(likes) as total_likes,
+                SUM(retweets) as total_retweets,
+                SUM(replies) as total_replies,
+                AVG(engagement_rate) as avg_engagement_rate,
+                COUNT(DISTINCT post_id) as posts_tracked
+             FROM $table
+             WHERE recorded_at > DATE_SUB(NOW(), INTERVAL %d DAY)",
+            $days
+        ), ARRAY_A);
+        
+        // Get daily breakdown
+        $daily = $wpdb->get_results($wpdb->prepare(
+            "SELECT 
+                DATE(recorded_at) as date,
+                SUM(impressions) as impressions,
+                SUM(clicks) as clicks,
+                AVG(engagement_rate) as engagement_rate
+             FROM $table
+             WHERE recorded_at > DATE_SUB(NOW(), INTERVAL %d DAY)
+             GROUP BY DATE(recorded_at)
+             ORDER BY date ASC",
+            $days
+        ), ARRAY_A);
+        
+        // Get top performing posts
+        $top_posts = $wpdb->get_results($wpdb->prepare(
+            "SELECT 
+                e.post_id,
+                p.post_title,
+                MAX(e.impressions) as impressions,
+                MAX(e.engagement_rate) as engagement_rate,
+                pm.meta_value as team
+             FROM $table e
+             LEFT JOIN {$wpdb->posts} p ON e.post_id = p.ID
+             LEFT JOIN {$wpdb->postmeta} pm ON e.post_id = pm.post_id AND pm.meta_key = 'flm_team'
+             WHERE e.recorded_at > DATE_SUB(NOW(), INTERVAL %d DAY)
+             GROUP BY e.post_id
+             ORDER BY engagement_rate DESC
+             LIMIT 10",
+            $days
+        ), ARRAY_A);
+        
+        // Get last sync time
+        $last_sync = $wpdb->get_var("SELECT MAX(recorded_at) FROM $table");
+        
+        wp_send_json_success([
+            'totals' => [
+                'impressions' => intval($totals['total_impressions'] ?? 0),
+                'clicks' => intval($totals['total_clicks'] ?? 0),
+                'likes' => intval($totals['total_likes'] ?? 0),
+                'retweets' => intval($totals['total_retweets'] ?? 0),
+                'replies' => intval($totals['total_replies'] ?? 0),
+                'engagement_rate' => round(floatval($totals['avg_engagement_rate'] ?? 0), 2),
+                'posts_tracked' => intval($totals['posts_tracked'] ?? 0),
+            ],
+            'daily' => $daily,
+            'top_posts' => $top_posts,
+            'last_sync' => $last_sync,
+        ]);
+    }
+    
+    /**
+     * Get mock engagement data for display when no real data available
+     */
+    private function get_mock_engagement_data() {
+        return [
+            'totals' => [
+                'impressions' => 0,
+                'clicks' => 0,
+                'likes' => 0,
+                'retweets' => 0,
+                'replies' => 0,
+                'engagement_rate' => 0,
+                'posts_tracked' => 0,
+            ],
+            'daily' => [],
+            'top_posts' => [],
+            'last_sync' => null,
+            'message' => 'No engagement data yet. Enable tracking and post to Twitter to start collecting metrics.',
+        ];
+    }
+    
+    /**
+     * AJAX: Sync engagement now
+     */
+    public function ajax_sync_engagement_now() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Permission denied']);
+        }
+        
+        $this->sync_engagement_metrics();
+        
+        wp_send_json_success(['message' => 'Engagement metrics synced successfully']);
+    }
+    
+    /**
+     * AJAX: Get single post engagement
+     */
+    public function ajax_get_post_engagement() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Permission denied']);
+        }
+        
+        $post_id = isset($_POST['post_id']) ? intval($_POST['post_id']) : 0;
+        
+        if (!$post_id) {
+            wp_send_json_error(['message' => 'Invalid post ID']);
+        }
+        
+        global $wpdb;
+        $table = $wpdb->prefix . 'flm_engagement_metrics';
+        
+        // Check if table exists
+        if ($wpdb->get_var("SHOW TABLES LIKE '$table'") !== $table) {
+            // Return from post meta
+            wp_send_json_success([
+                'twitter' => [
+                    'impressions' => intval(get_post_meta($post_id, '_flm_twitter_impressions', true)),
+                    'clicks' => intval(get_post_meta($post_id, '_flm_twitter_clicks', true)),
+                    'likes' => intval(get_post_meta($post_id, '_flm_twitter_likes', true)),
+                    'engagement_rate' => floatval(get_post_meta($post_id, '_flm_twitter_engagement', true)),
+                    'last_synced' => get_post_meta($post_id, '_flm_twitter_synced_at', true),
+                ],
+            ]);
+            return;
+        }
+        
+        // Get historical data for this post
+        $history = $wpdb->get_results($wpdb->prepare(
+            "SELECT * FROM $table 
+             WHERE post_id = %d 
+             ORDER BY recorded_at DESC 
+             LIMIT 30",
+            $post_id
+        ), ARRAY_A);
+        
+        // Get latest metrics
+        $latest = !empty($history) ? $history[0] : null;
+        
+        wp_send_json_success([
+            'latest' => $latest,
+            'history' => $history,
+            'post_meta' => [
+                'twitter_id' => get_post_meta($post_id, '_flm_twitter_id', true),
+                'posted_at' => get_post_meta($post_id, '_flm_twitter_posted_at', true),
+            ],
+        ]);
+    }
+    
+    /**
+     * Override the ajax_get_social_metrics to use real data
+     */
+    public function get_real_social_metrics() {
+        $settings = $this->get_settings();
+        
+        global $wpdb;
+        $table = $wpdb->prefix . 'flm_engagement_metrics';
+        
+        // Check if table exists and has data
+        if ($wpdb->get_var("SHOW TABLES LIKE '$table'") !== $table) {
+            return null;
+        }
+        
+        $twitter = $wpdb->get_row(
+            "SELECT 
+                SUM(impressions) as impressions,
+                SUM(clicks) as clicks,
+                SUM(likes) + SUM(retweets) + SUM(replies) as engagements
+             FROM $table 
+             WHERE platform = 'twitter' 
+             AND recorded_at > DATE_SUB(NOW(), INTERVAL 7 DAY)",
+            ARRAY_A
+        );
+        
+        if ($twitter && $twitter['impressions'] > 0) {
+            return [
+                'twitter' => [
+                    'impressions' => intval($twitter['impressions']),
+                    'engagements' => intval($twitter['engagements']),
+                    'clicks' => intval($twitter['clicks']),
+                ],
+                'facebook' => [
+                    'reach' => 0,
+                    'engagements' => 0,
+                    'clicks' => 0,
+                ],
+            ];
+        }
+        
+        return null;
+    }
+    
+    // ========================================
+    // END PHASE 1 SOCIAL INFRASTRUCTURE
+    // ========================================
     
     // ========================================
     // CONTENT & PUBLISHING (v2.10.0)
@@ -25219,6 +26753,16 @@ Respond in JSON format only:
                         <span class="flm-tab-badge" style="background:rgba(63,185,80,0.15);color:var(--flm-success);"><?php echo $pending_scheduled; ?></span>
                         <?php endif; ?>
                     </button>
+                    <button type="button" class="flm-tab" data-tab="queue" role="tab">
+                        <?php echo $this->icon('clock'); ?>
+                        <span class="flm-tab-text">Queue</span>
+                        <?php 
+                        $queue_items = $this->get_queue_items('pending');
+                        $queue_count = count($queue_items);
+                        if ($queue_count > 0): ?>
+                        <span class="flm-tab-badge" style="background:rgba(245,158,11,0.15);color:#f59e0b;"><?php echo $queue_count; ?></span>
+                        <?php endif; ?>
+                    </button>
                     <button type="button" class="flm-tab" data-tab="analytics" role="tab">
                         <?php echo $this->icon('chart'); ?>
                         <span class="flm-tab-text">Analytics</span>
@@ -26148,6 +27692,170 @@ Respond in JSON format only:
                             
                         </div>
                     </div><!-- End Publishing Panel -->
+                    
+                    <!-- Queue Tab Panel (v2.21.0) -->
+                    <div id="panel-queue" class="flm-tab-panel" role="tabpanel">
+                        <section class="flm-queue-section" id="flm-queue-section">
+                            
+                            <!-- Header -->
+                            <div class="flm-section-header" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;">
+                                <div>
+                                    <h2 style="margin:0 0 4px;font-size:20px;font-weight:600;">Social Post Queue</h2>
+                                    <p style="margin:0;color:var(--flm-text-muted);font-size:14px;">Manage scheduled and pending social media posts</p>
+                                </div>
+                                <div style="display:flex;gap:8px;">
+                                    <button type="button" class="flm-btn flm-btn-secondary" id="flm-queue-refresh" title="Refresh Queue">
+                                        <?php echo $this->icon('refresh'); ?> Refresh
+                                    </button>
+                                    <button type="button" class="flm-btn flm-btn-secondary" id="flm-queue-process-now" title="Process Queue Now">
+                                        <?php echo $this->icon('bolt'); ?> Process Now
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <!-- Stats Cards -->
+                            <div class="flm-queue-stats" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:16px;margin-bottom:24px;">
+                                <div class="flm-stat-card" style="background:var(--flm-card);border-radius:12px;padding:16px;border:1px solid var(--flm-border);">
+                                    <div style="font-size:24px;font-weight:700;color:#f59e0b;" id="queue-stat-pending">0</div>
+                                    <div style="font-size:12px;color:var(--flm-text-muted);margin-top:4px;">Pending</div>
+                                </div>
+                                <div class="flm-stat-card" style="background:var(--flm-card);border-radius:12px;padding:16px;border:1px solid var(--flm-border);">
+                                    <div style="font-size:24px;font-weight:700;color:#3b82f6;" id="queue-stat-scheduled">0</div>
+                                    <div style="font-size:12px;color:var(--flm-text-muted);margin-top:4px;">Scheduled</div>
+                                </div>
+                                <div class="flm-stat-card" style="background:var(--flm-card);border-radius:12px;padding:16px;border:1px solid var(--flm-border);">
+                                    <div style="font-size:24px;font-weight:700;color:#10b981;" id="queue-stat-completed">0</div>
+                                    <div style="font-size:12px;color:var(--flm-text-muted);margin-top:4px;">Completed</div>
+                                </div>
+                                <div class="flm-stat-card" style="background:var(--flm-card);border-radius:12px;padding:16px;border:1px solid var(--flm-border);">
+                                    <div style="font-size:24px;font-weight:700;color:#ef4444;" id="queue-stat-failed">0</div>
+                                    <div style="font-size:12px;color:var(--flm-text-muted);margin-top:4px;">Failed</div>
+                                </div>
+                            </div>
+                            
+                            <!-- Filter Bar -->
+                            <div class="flm-queue-filters" style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;">
+                                <select id="flm-queue-filter-status" class="flm-select" style="min-width:140px;">
+                                    <option value="">All Status</option>
+                                    <option value="pending">Pending</option>
+                                    <option value="pending_approval">Awaiting Approval</option>
+                                    <option value="scheduled">Scheduled</option>
+                                    <option value="processing">Processing</option>
+                                    <option value="completed">Completed</option>
+                                    <option value="failed">Failed</option>
+                                </select>
+                                <select id="flm-queue-filter-platform" class="flm-select" style="min-width:140px;">
+                                    <option value="">All Platforms</option>
+                                    <option value="twitter">Twitter/X</option>
+                                    <option value="facebook">Facebook</option>
+                                    <option value="instagram">Instagram</option>
+                                </select>
+                                <div style="flex:1;"></div>
+                                <button type="button" class="flm-btn flm-btn-ghost" id="flm-queue-clear-completed">
+                                    <?php echo $this->icon('trash'); ?> Clear Completed
+                                </button>
+                            </div>
+                            
+                            <!-- Queue Table -->
+                            <div class="flm-queue-table-wrapper" style="background:var(--flm-card);border-radius:12px;border:1px solid var(--flm-border);overflow:hidden;">
+                                <table class="flm-queue-table" style="width:100%;border-collapse:collapse;">
+                                    <thead>
+                                        <tr style="background:var(--flm-surface);border-bottom:1px solid var(--flm-border);">
+                                            <th style="padding:12px 16px;text-align:left;font-size:12px;font-weight:600;color:var(--flm-text-muted);text-transform:uppercase;">
+                                                <input type="checkbox" id="flm-queue-select-all" style="cursor:pointer;">
+                                            </th>
+                                            <th style="padding:12px 16px;text-align:left;font-size:12px;font-weight:600;color:var(--flm-text-muted);text-transform:uppercase;">Post</th>
+                                            <th style="padding:12px 16px;text-align:left;font-size:12px;font-weight:600;color:var(--flm-text-muted);text-transform:uppercase;">Platform</th>
+                                            <th style="padding:12px 16px;text-align:left;font-size:12px;font-weight:600;color:var(--flm-text-muted);text-transform:uppercase;">Status</th>
+                                            <th style="padding:12px 16px;text-align:left;font-size:12px;font-weight:600;color:var(--flm-text-muted);text-transform:uppercase;">Scheduled</th>
+                                            <th style="padding:12px 16px;text-align:right;font-size:12px;font-weight:600;color:var(--flm-text-muted);text-transform:uppercase;">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="flm-queue-tbody">
+                                        <tr>
+                                            <td colspan="6" style="padding:48px;text-align:center;color:var(--flm-text-muted);">
+                                                <div style="font-size:36px;margin-bottom:12px;">📭</div>
+                                                <div>Queue is empty. Posts will appear here when scheduled for social sharing.</div>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            
+                            <!-- Bulk Actions -->
+                            <div class="flm-queue-bulk-actions" style="display:none;margin-top:16px;padding:16px;background:var(--flm-surface);border-radius:8px;border:1px solid var(--flm-border);">
+                                <span style="font-size:13px;color:var(--flm-text-muted);margin-right:12px;">
+                                    <strong id="flm-queue-selected-count">0</strong> items selected
+                                </span>
+                                <button type="button" class="flm-btn flm-btn-sm flm-btn-secondary" data-bulk-action="approve">Approve</button>
+                                <button type="button" class="flm-btn flm-btn-sm flm-btn-secondary" data-bulk-action="retry">Retry</button>
+                                <button type="button" class="flm-btn flm-btn-sm flm-btn-danger" data-bulk-action="cancel">Cancel</button>
+                            </div>
+                            
+                            <!-- Engagement Metrics Section -->
+                            <div class="flm-engagement-section" style="margin-top:32px;">
+                                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+                                    <h3 style="margin:0;font-size:16px;font-weight:600;">Engagement Metrics</h3>
+                                    <button type="button" class="flm-btn flm-btn-secondary flm-btn-sm" id="flm-sync-engagement">
+                                        <?php echo $this->icon('refresh'); ?> Sync Now
+                                    </button>
+                                </div>
+                                
+                                <div class="flm-engagement-stats" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;">
+                                    <div class="flm-engagement-card" style="background:var(--flm-card);border-radius:12px;padding:20px;border:1px solid var(--flm-border);">
+                                        <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+                                            <div style="width:40px;height:40px;background:rgba(59,130,246,0.1);border-radius:10px;display:flex;align-items:center;justify-content:center;color:#3b82f6;">
+                                                <?php echo $this->icon('eye'); ?>
+                                            </div>
+                                            <div>
+                                                <div style="font-size:11px;color:var(--flm-text-muted);text-transform:uppercase;letter-spacing:0.5px;">Impressions</div>
+                                                <div style="font-size:24px;font-weight:700;" id="engagement-impressions">--</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="flm-engagement-card" style="background:var(--flm-card);border-radius:12px;padding:20px;border:1px solid var(--flm-border);">
+                                        <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+                                            <div style="width:40px;height:40px;background:rgba(236,72,153,0.1);border-radius:10px;display:flex;align-items:center;justify-content:center;color:#ec4899;">
+                                                ❤️
+                                            </div>
+                                            <div>
+                                                <div style="font-size:11px;color:var(--flm-text-muted);text-transform:uppercase;letter-spacing:0.5px;">Likes</div>
+                                                <div style="font-size:24px;font-weight:700;" id="engagement-likes">--</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="flm-engagement-card" style="background:var(--flm-card);border-radius:12px;padding:20px;border:1px solid var(--flm-border);">
+                                        <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+                                            <div style="width:40px;height:40px;background:rgba(16,185,129,0.1);border-radius:10px;display:flex;align-items:center;justify-content:center;color:#10b981;">
+                                                🔁
+                                            </div>
+                                            <div>
+                                                <div style="font-size:11px;color:var(--flm-text-muted);text-transform:uppercase;letter-spacing:0.5px;">Retweets</div>
+                                                <div style="font-size:24px;font-weight:700;" id="engagement-retweets">--</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="flm-engagement-card" style="background:var(--flm-card);border-radius:12px;padding:20px;border:1px solid var(--flm-border);">
+                                        <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+                                            <div style="width:40px;height:40px;background:rgba(245,158,11,0.1);border-radius:10px;display:flex;align-items:center;justify-content:center;color:#f59e0b;">
+                                                📈
+                                            </div>
+                                            <div>
+                                                <div style="font-size:11px;color:var(--flm-text-muted);text-transform:uppercase;letter-spacing:0.5px;">Engagement Rate</div>
+                                                <div style="font-size:24px;font-weight:700;" id="engagement-rate">--</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div style="margin-top:16px;padding:12px;background:rgba(88,166,255,0.1);border-radius:8px;font-size:12px;color:var(--flm-text-muted);border:1px solid rgba(88,166,255,0.2);">
+                                    💡 <strong>Tip:</strong> Engagement metrics sync automatically every hour. Click "Sync Now" to fetch the latest data from Twitter.
+                                    <span id="engagement-last-sync" style="float:right;">Last sync: Never</span>
+                                </div>
+                            </div>
+                            
+                        </section>
+                    </div><!-- End Queue Panel -->
                 
                     <!-- Analytics Tab Panel -->
                     <div id="panel-analytics" class="flm-tab-panel" role="tabpanel">
