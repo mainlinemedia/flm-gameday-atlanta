@@ -3,7 +3,7 @@
  * Plugin Name: FLM GameDay Atlanta
  * Plugin URI: https://github.com/mainlinemedia/flm-gameday-atlanta
  * Description: Import Braves, Hawks, Falcons, United, Dream, UGA & GT content from Field Level Media with AI enhancement, social posting, and analytics.
- * Version: 2.21.1
+ * Version: 2.22.0
  * Author: Austin / Mainline Media Group
  * Author URI: https://mainlinemediagroup.com
  * License: Proprietary
@@ -20,7 +20,7 @@ if (!defined('ABSPATH')) exit;
 class FLM_GameDay_Atlanta {
     
     private $api_base = 'https://api.fieldlevelmedia.com/v1';
-    private $version = '2.21.1';
+    private $version = '2.22.0';
     
     // GitHub Update Configuration
     private $github_username = 'mainlinemedia';
@@ -87,7 +87,7 @@ class FLM_GameDay_Atlanta {
         'twitter_oauth2_expires_at' => 0,
         'twitter_user_id' => '',
         'twitter_username' => '',
-        // Legacy Twitter OAuth 1.0a (deprecated)
+        // Twitter OAuth 1.0a for media upload (v2.22.0)
         'twitter_api_key' => '',
         'twitter_api_secret' => '',
         'twitter_access_token' => '',
@@ -17842,7 +17842,7 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
                     continue;
                 }
                 
-                // Check if this story already exists
+                // Check if this story already exists (by story_id)
                 $existing = get_posts([
                     'meta_key' => 'flm_story_id',
                     'meta_value' => $story['storyId'],
@@ -17857,10 +17857,22 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
                 $action = 'create';
                 $existing_id = null;
                 $existing_status = null;
+                $fuzzy_match = null;
+                
                 if (!empty($existing)) {
                     $existing_id = $existing[0]->ID;
                     $existing_status = $existing[0]->post_status;
                     $action = ($existing_status === 'publish') ? 'protected' : 'update';
+                } else {
+                    // v2.22.0: Check for fuzzy duplicate by title
+                    $headline = wp_strip_all_tags($story['headline']);
+                    $fuzzy = $this->find_fuzzy_duplicate($headline, $team_key, 80);
+                    if ($fuzzy) {
+                        $existing_id = $fuzzy['post_id'];
+                        $existing_status = get_post_status($fuzzy['post_id']);
+                        $action = ($existing_status === 'publish') ? 'protected' : 'fuzzy_match';
+                        $fuzzy_match = $fuzzy;
+                    }
                 }
                 
                 $preview_stories[] = [
@@ -17875,6 +17887,7 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
                     'existing_id' => $existing_id,
                     'existing_status' => $existing_status,
                     'has_image' => !empty($story['images']),
+                    'fuzzy_match' => $fuzzy_match,
                 ];
             }
             
@@ -18272,7 +18285,7 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
         $settings['twitter_username'] = $old_settings['twitter_username'] ?? '';
         $settings['twitter_user_id'] = $old_settings['twitter_user_id'] ?? '';
         
-        // Legacy Twitter OAuth 1.0a (deprecated but preserved)
+        // Twitter OAuth 1.0a for media upload (v2.22.0)
         $settings['twitter_api_key'] = isset($post_data['twitter_api_key']) ? sanitize_text_field($post_data['twitter_api_key']) : ($old_settings['twitter_api_key'] ?? '');
         $settings['twitter_api_secret'] = isset($post_data['twitter_api_secret']) ? sanitize_text_field($post_data['twitter_api_secret']) : ($old_settings['twitter_api_secret'] ?? '');
         $settings['twitter_access_token'] = isset($post_data['twitter_access_token']) ? sanitize_text_field($post_data['twitter_access_token']) : ($old_settings['twitter_access_token'] ?? '');
@@ -18736,7 +18749,7 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
     // ========================================
     
     /** @var string Database version */
-    private $db_version = '2.21.1';
+    private $db_version = '2.22.0';
     
     /** @var array Cached table existence checks */
     private $table_exists_cache = [];
@@ -19117,7 +19130,7 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
         $result = match($item['platform']) {
             'twitter' => $this->post_to_twitter_v2_with_media($item['post_id'], $item['headline'], $url, $item['team_key'], $img),
             'facebook' => $this->post_to_facebook($item['post_id'], $item['headline'], $url, $item['team_key']),
-            'instagram' => $this->post_to_instagram($item['post_id'], $item['headline'], $img),
+            'instagram' => $this->post_to_instagram_v2($item['post_id'], $item['headline'], $img),
             default => ['success' => false, 'error' => 'Unknown platform'],
         };
         
@@ -19180,9 +19193,22 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
         }
         $tweet = mb_substr($tweet, 0, 280);
         
+        // v2.22.0: Upload media if image URL provided and OAuth 1.0a configured
+        $payload = ['text' => $tweet];
+        if (!empty($image_url) && !empty($settings['twitter_upload_images'])) {
+            $media_result = $this->upload_twitter_media($image_url, $token);
+            if ($media_result['success'] && !empty($media_result['media_id'])) {
+                $payload['media'] = ['media_ids' => [$media_result['media_id']]];
+                $this->log_activity('social', "Uploaded media for tweet: {$media_result['media_id']}");
+            } elseif (!$media_result['success']) {
+                // Log but don't fail - post without media
+                $this->log_activity('social', "Media upload skipped: " . ($media_result['error'] ?? 'Unknown'));
+            }
+        }
+        
         $resp = wp_remote_post('https://api.twitter.com/2/tweets', [
             'headers' => ['Authorization' => "Bearer $token", 'Content-Type' => 'application/json'],
-            'body' => json_encode(['text' => $tweet]),
+            'body' => json_encode($payload),
             'timeout' => 30,
         ]);
         
@@ -19192,7 +19218,8 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
         $body = json_decode(wp_remote_retrieve_body($resp), true);
         
         if ($code === 201 && isset($body['data']['id'])) {
-            return ['success' => true, 'tweet_id' => $body['data']['id'], 'tweet_text' => $tweet];
+            $has_media = isset($payload['media']);
+            return ['success' => true, 'tweet_id' => $body['data']['id'], 'tweet_text' => $tweet, 'has_media' => $has_media];
         }
         
         return ['success' => false, 'error' => $body['detail'] ?? $body['errors'][0]['message'] ?? "HTTP $code", 'code' => $code];
@@ -19201,8 +19228,230 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
     /**
      * Upload media to Twitter (OAuth 1.0a required - placeholder)
      */
-    private function upload_twitter_media($image_url, $token) {
-        return ['success' => false, 'error' => 'Media upload requires OAuth 1.0a'];
+    private function upload_twitter_media($image_url, $oauth2_token) {
+        // Twitter media upload requires OAuth 1.0a - use stored credentials
+        $settings = $this->get_settings();
+        
+        // OAuth 1.0a credentials (separate from OAuth 2.0)
+        $consumer_key = $settings['twitter_api_key'] ?? '';
+        $consumer_secret = $settings['twitter_api_secret'] ?? '';
+        $access_token = $settings['twitter_access_token'] ?? '';
+        $access_token_secret = $settings['twitter_access_secret'] ?? '';
+        
+        if (empty($consumer_key) || empty($consumer_secret) || empty($access_token) || empty($access_token_secret)) {
+            return ['success' => false, 'error' => 'OAuth 1.0a credentials required for media upload. Configure in Publishing > Twitter OAuth 1.0a section.'];
+        }
+        
+        // Download image
+        $img_response = wp_remote_get($image_url, ['timeout' => 30]);
+        if (is_wp_error($img_response)) {
+            return ['success' => false, 'error' => 'Failed to download image'];
+        }
+        
+        $image_data = wp_remote_retrieve_body($img_response);
+        if (empty($image_data) || strlen($image_data) > 5242880) {
+            return ['success' => false, 'error' => empty($image_data) ? 'Empty image' : 'Image too large (max 5MB)'];
+        }
+        
+        $media_data = base64_encode($image_data);
+        
+        // Build OAuth 1.0a signature for media upload
+        $upload_url = 'https://upload.twitter.com/1.1/media/upload.json';
+        $oauth_params = [
+            'oauth_consumer_key' => $consumer_key,
+            'oauth_nonce' => bin2hex(random_bytes(16)),
+            'oauth_signature_method' => 'HMAC-SHA1',
+            'oauth_timestamp' => (string)time(),
+            'oauth_token' => $access_token,
+            'oauth_version' => '1.0',
+        ];
+        
+        // For media upload, we don't include media_data in signature base
+        ksort($oauth_params);
+        $param_string = http_build_query($oauth_params, '', '&', PHP_QUERY_RFC3986);
+        $base_string = 'POST&' . rawurlencode($upload_url) . '&' . rawurlencode($param_string);
+        $signing_key = rawurlencode($consumer_secret) . '&' . rawurlencode($access_token_secret);
+        $oauth_params['oauth_signature'] = base64_encode(hash_hmac('sha1', $base_string, $signing_key, true));
+        
+        // Build Authorization header
+        ksort($oauth_params);
+        $auth_parts = [];
+        foreach ($oauth_params as $k => $v) {
+            $auth_parts[] = rawurlencode($k) . '="' . rawurlencode($v) . '"';
+        }
+        $auth_header = 'OAuth ' . implode(', ', $auth_parts);
+        
+        $response = wp_remote_post($upload_url, [
+            'headers' => [
+                'Authorization' => $auth_header,
+                'Content-Type' => 'application/x-www-form-urlencoded',
+            ],
+            'body' => ['media_data' => $media_data],
+            'timeout' => 120,
+        ]);
+        
+        if (is_wp_error($response)) {
+            return ['success' => false, 'error' => $response->get_error_message()];
+        }
+        
+        $code = wp_remote_retrieve_response_code($response);
+        $body = json_decode(wp_remote_retrieve_body($response), true);
+        
+        if ($code === 200 && !empty($body['media_id_string'])) {
+            return ['success' => true, 'media_id' => $body['media_id_string']];
+        }
+        
+        $error = $body['errors'][0]['message'] ?? $body['error'] ?? "Media upload failed (HTTP $code)";
+        return ['success' => false, 'error' => $error];
+    }
+    
+    /**
+     * Check for fuzzy duplicate by title similarity (v2.22.0)
+     */
+    private function find_fuzzy_duplicate($headline, $team_key, $threshold = 85) {
+        global $wpdb;
+        
+        // Get recent posts from same team (last 7 days)
+        $recent_posts = $wpdb->get_results($wpdb->prepare(
+            "SELECT p.ID, p.post_title FROM {$wpdb->posts} p
+             INNER JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id AND pm.meta_key = 'flm_team' AND pm.meta_value = %s
+             WHERE p.post_type = 'post' AND p.post_status IN ('publish','draft','pending')
+             AND p.post_date > DATE_SUB(NOW(), INTERVAL 7 DAY)
+             ORDER BY p.post_date DESC LIMIT 100",
+            $team_key
+        ), ARRAY_A);
+        
+        if (empty($recent_posts)) return null;
+        
+        $headline_normalized = $this->normalize_headline($headline);
+        
+        foreach ($recent_posts as $post) {
+            $existing_normalized = $this->normalize_headline($post['post_title']);
+            
+            // Check exact match first
+            if ($headline_normalized === $existing_normalized) {
+                return ['post_id' => $post['ID'], 'similarity' => 100, 'title' => $post['post_title']];
+            }
+            
+            // Check similarity
+            similar_text($headline_normalized, $existing_normalized, $percent);
+            if ($percent >= $threshold) {
+                return ['post_id' => $post['ID'], 'similarity' => round($percent), 'title' => $post['post_title']];
+            }
+            
+            // Also check Levenshtein for short headlines
+            if (strlen($headline_normalized) < 100 && strlen($existing_normalized) < 100) {
+                $lev = levenshtein($headline_normalized, $existing_normalized);
+                $max_len = max(strlen($headline_normalized), strlen($existing_normalized));
+                $lev_percent = $max_len > 0 ? (1 - ($lev / $max_len)) * 100 : 0;
+                if ($lev_percent >= $threshold) {
+                    return ['post_id' => $post['ID'], 'similarity' => round($lev_percent), 'title' => $post['post_title']];
+                }
+            }
+        }
+        
+        return null;
+    }
+    
+    /**
+     * Normalize headline for comparison
+     */
+    private function normalize_headline($text) {
+        $text = strtolower(trim($text));
+        $text = preg_replace('/[^a-z0-9\s]/', '', $text); // Remove punctuation
+        $text = preg_replace('/\s+/', ' ', $text); // Normalize whitespace
+        // Remove common sports prefixes/suffixes
+        $text = preg_replace('/^(breaking|update|report|watch|video|preview|recap)\s*:?\s*/i', '', $text);
+        return trim($text);
+    }
+    
+    /**
+     * Enhanced Instagram posting with status polling (v2.22.0)
+     */
+    private function post_to_instagram_v2($post_id, $caption, $image_url) {
+        $settings = $this->get_settings();
+        
+        $ig_id = $settings['instagram_business_id'] ?? '';
+        $token = $settings['facebook_page_access_token'] ?? $settings['facebook_oauth_access_token'] ?? '';
+        
+        if (empty($ig_id) || empty($token)) {
+            return ['success' => false, 'error' => 'Instagram not connected. Link Facebook Page with Instagram Business account.'];
+        }
+        
+        if (empty($image_url)) {
+            return ['success' => false, 'error' => 'Image required for Instagram'];
+        }
+        
+        // Validate image URL is publicly accessible
+        if (strpos($image_url, 'localhost') !== false || strpos($image_url, '127.0.0.1') !== false) {
+            return ['success' => false, 'error' => 'Image must be publicly accessible URL'];
+        }
+        
+        // Step 1: Create media container
+        $container = wp_remote_post("https://graph.facebook.com/v19.0/{$ig_id}/media", [
+            'body' => [
+                'image_url' => $image_url,
+                'caption' => mb_substr($caption, 0, 2200), // Instagram caption limit
+                'access_token' => $token,
+            ],
+            'timeout' => 60,
+        ]);
+        
+        if (is_wp_error($container)) {
+            return ['success' => false, 'error' => 'API error: ' . $container->get_error_message()];
+        }
+        
+        $container_data = json_decode(wp_remote_retrieve_body($container), true);
+        
+        if (empty($container_data['id'])) {
+            $err = $container_data['error']['message'] ?? 'Failed to create container';
+            return ['success' => false, 'error' => $err];
+        }
+        
+        $container_id = $container_data['id'];
+        
+        // Step 2: Poll for container status (Instagram processes async)
+        $max_attempts = 10;
+        $ready = false;
+        for ($i = 0; $i < $max_attempts; $i++) {
+            sleep(2);
+            
+            $status_resp = wp_remote_get("https://graph.facebook.com/v19.0/{$container_id}?fields=status_code&access_token={$token}");
+            if (is_wp_error($status_resp)) continue;
+            
+            $status_data = json_decode(wp_remote_retrieve_body($status_resp), true);
+            $status_code = $status_data['status_code'] ?? '';
+            
+            if ($status_code === 'FINISHED') {
+                $ready = true;
+                break;
+            } elseif ($status_code === 'ERROR') {
+                return ['success' => false, 'error' => 'Instagram rejected the image'];
+            }
+        }
+        
+        if (!$ready) {
+            return ['success' => false, 'error' => 'Timeout waiting for Instagram to process image'];
+        }
+        
+        // Step 3: Publish
+        $publish = wp_remote_post("https://graph.facebook.com/v19.0/{$ig_id}/media_publish", [
+            'body' => ['creation_id' => $container_id, 'access_token' => $token],
+            'timeout' => 60,
+        ]);
+        
+        if (is_wp_error($publish)) {
+            return ['success' => false, 'error' => $publish->get_error_message()];
+        }
+        
+        $pub_data = json_decode(wp_remote_retrieve_body($publish), true);
+        
+        if (!empty($pub_data['id'])) {
+            $this->log_activity('social', "Posted to Instagram: " . mb_substr($caption, 0, 40) . '...');
+            return ['success' => true, 'post_id' => $pub_data['id']];
+        }
+        
+        return ['success' => false, 'error' => $pub_data['error']['message'] ?? 'Publish failed'];
     }
     
     // --- AJAX Handlers (Consolidated) ---
@@ -27092,6 +27341,33 @@ Respond in JSON format only:
                                                     Disconnect
                                                 </button>
                                             </div>
+                                            
+                                            <!-- v2.22.0: OAuth 1.0a for Media Upload -->
+                                            <details style="margin-top:12px;">
+                                                <summary style="font-size:11px;color:var(--flm-text-muted);cursor:pointer;">🖼️ Media Upload (OAuth 1.0a)</summary>
+                                                <div style="margin-top:8px;padding:12px;background:var(--flm-bg);border-radius:8px;">
+                                                    <p style="font-size:10px;color:var(--flm-text-muted);margin:0 0 8px;">Required for posting images. Get from the same Twitter Developer App under "Keys and Tokens".</p>
+                                                    <div class="flm-form-group" style="margin:0 0 6px;">
+                                                        <label class="flm-label" style="font-size:10px;">API Key (Consumer Key)</label>
+                                                        <input type="text" name="flm_settings[twitter_api_key]" class="flm-input flm-input-sm" value="<?php echo esc_attr($settings['twitter_api_key'] ?? ''); ?>" placeholder="API Key">
+                                                    </div>
+                                                    <div class="flm-form-group" style="margin:0 0 6px;">
+                                                        <label class="flm-label" style="font-size:10px;">API Secret (Consumer Secret)</label>
+                                                        <input type="password" name="flm_settings[twitter_api_secret]" class="flm-input flm-input-sm" value="<?php echo esc_attr($settings['twitter_api_secret'] ?? ''); ?>" placeholder="API Secret">
+                                                    </div>
+                                                    <div class="flm-form-group" style="margin:0 0 6px;">
+                                                        <label class="flm-label" style="font-size:10px;">Access Token</label>
+                                                        <input type="text" name="flm_settings[twitter_access_token]" class="flm-input flm-input-sm" value="<?php echo esc_attr($settings['twitter_access_token'] ?? ''); ?>" placeholder="Access Token">
+                                                    </div>
+                                                    <div class="flm-form-group" style="margin:0;">
+                                                        <label class="flm-label" style="font-size:10px;">Access Token Secret</label>
+                                                        <input type="password" name="flm_settings[twitter_access_secret]" class="flm-input flm-input-sm" value="<?php echo esc_attr($settings['twitter_access_secret'] ?? ''); ?>" placeholder="Access Token Secret">
+                                                    </div>
+                                                    <?php if (!empty($settings['twitter_api_key']) && !empty($settings['twitter_access_token'])): ?>
+                                                    <div style="margin-top:8px;font-size:10px;color:var(--flm-success);">✓ Media upload enabled</div>
+                                                    <?php endif; ?>
+                                                </div>
+                                            </details>
                                             <?php else: ?>
                                             <div style="margin-bottom:12px;">
                                                 <div class="flm-form-group" style="margin:0 0 8px;">
