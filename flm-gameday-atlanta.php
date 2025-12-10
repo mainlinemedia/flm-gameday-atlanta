@@ -3,7 +3,7 @@
  * Plugin Name: FLM GameDay Atlanta
  * Plugin URI: https://github.com/mainlinemedia/flm-gameday-atlanta
  * Description: Import Braves, Hawks, Falcons, United, Dream, UGA & GT content from Field Level Media with AI enhancement, social posting, and analytics.
- * Version: 2.20.0
+ * Version: 2.20.1
  * Author: Austin / Mainline Media Group
  * Author URI: https://mainlinemediagroup.com
  * License: Proprietary
@@ -20,7 +20,7 @@ if (!defined('ABSPATH')) exit;
 class FLM_GameDay_Atlanta {
     
     private $api_base = 'https://api.fieldlevelmedia.com/v1';
-    private $version = '2.20.0';
+    private $version = '2.20.1';
     
     // GitHub Update Configuration
     private $github_username = 'mainlinemedia';
@@ -228,7 +228,7 @@ class FLM_GameDay_Atlanta {
             'league' => 'MLB',
             'league_id' => 1,
             'identifiers' => ['Braves', 'ATL', 'Atlanta Braves'],
-            'team_ids' => ['68', '144', '15'],  // Multiple potential IDs
+            'team_ids' => ['68'],  // Atlanta Braves MLB team ID only
             'color' => '#CE1141',
             'secondary' => '#13274F',
         ],
@@ -14990,8 +14990,10 @@ class FLM_GameDay_Atlanta {
     
     /**
      * Check if story matches our teams
+     * @param array $story The story data from API
+     * @param int $league_id The league ID this story came from
      */
-    private function get_matching_team($story) {
+    private function get_matching_team($story, $league_id = null) {
         $settings = $this->get_settings();
         $home_team = $story['homeTeam'] ?? null;
         $away_team = $story['awayTeam'] ?? null;
@@ -15005,10 +15007,18 @@ class FLM_GameDay_Atlanta {
             return false;
         }
         
-        // Match by team ID ONLY (strict matching for accuracy)
+        // Match by team ID with league validation (v2.20.1 - prevent cross-league collisions)
         foreach ($this->target_teams as $key => $team_config) {
             if (empty($settings['teams_enabled'][$key])) {
                 continue;
+            }
+            
+            // League validation: ensure team belongs to this league
+            if ($league_id !== null) {
+                $team_leagues = $team_config['league_ids'] ?? [$team_config['league_id']];
+                if (!in_array($league_id, $team_leagues)) {
+                    continue; // Skip teams that don't belong to this league
+                }
             }
             
             if (!empty($team_config['team_ids'])) {
@@ -15086,7 +15096,7 @@ class FLM_GameDay_Atlanta {
             }
             
             foreach ($stories as $story) {
-                $team_key = $this->get_matching_team($story);
+                $team_key = $this->get_matching_team($story, $league_id);
                 
                 if (!$team_key) {
                     $skipped++;
@@ -16264,7 +16274,7 @@ class FLM_GameDay_Atlanta {
                         $team_ids_found[$away_id] = $away_name ?: "Team {$away_id}";
                     }
                     
-                    if ($this->get_matching_team($story)) {
+                    if ($this->get_matching_team($story, $league_id)) {
                         $matches++;
                     }
                 }
@@ -17511,7 +17521,7 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
             }
             
             foreach ($stories as $story) {
-                $team_key = $this->get_matching_team($story);
+                $team_key = $this->get_matching_team($story, $league_id);
                 
                 if (!$team_key) {
                     $skipped++;
@@ -17663,7 +17673,7 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
                     continue;
                 }
                 
-                $team_key = $this->get_matching_team($story);
+                $team_key = $this->get_matching_team($story, $league_id);
                 
                 if (!$team_key) {
                     $skipped++;
@@ -25058,7 +25068,7 @@ Respond in JSON format only:
                         $unmatched_headlines = [];
                         if (is_array($stories)) {
                             foreach ($stories as $story) {
-                                $team_key = $this->get_matching_team($story);
+                                $team_key = $this->get_matching_team($story, $league_id);
                                 $headline = wp_strip_all_tags($story['headline'] ?? 'No headline');
                                 if ($team_key) {
                                     $matched++;
