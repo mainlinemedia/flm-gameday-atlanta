@@ -3,7 +3,7 @@
  * Plugin Name: FLM GameDay Atlanta
  * Plugin URI: https://github.com/mainlinemedia/flm-gameday-atlanta
  * Description: Import Braves, Hawks, Falcons, United, Dream, UGA & GT content from Field Level Media with AI enhancement, social posting, and analytics.
- * Version: 2.19.0
+ * Version: 2.20.0
  * Author: Austin / Mainline Media Group
  * Author URI: https://mainlinemediagroup.com
  * License: Proprietary
@@ -20,7 +20,7 @@ if (!defined('ABSPATH')) exit;
 class FLM_GameDay_Atlanta {
     
     private $api_base = 'https://api.fieldlevelmedia.com/v1';
-    private $version = '2.19.0';
+    private $version = '2.20.0';
     
     // GitHub Update Configuration
     private $github_username = 'mainlinemedia';
@@ -191,6 +191,20 @@ class FLM_GameDay_Atlanta {
         'dashboard_cache_seconds' => 300,  // 5 minute cache for real-time
         // GitHub Auto-Updates (v2.17.0)
         'github_token' => '',  // Optional: Personal Access Token for private repos
+        // RSS Feeds (v2.20.0)
+        'rss_enabled' => true,
+        'rss_items_count' => 20,
+        'rss_include_full_content' => false,
+        'rss_per_team_feeds' => true,
+        'rss_combined_feed' => true,
+        // Webhooks (v2.20.0)
+        'webhooks' => [],  // Array of webhook configurations
+        'webhook_on_import' => true,
+        'webhook_on_publish' => true,
+        // Analytics Export (v2.20.0)
+        'export_include_pageviews' => true,
+        'export_include_social' => true,
+        'export_include_esp' => true,
     ];
     
     // Integration endpoints (v2.8.0)
@@ -445,6 +459,17 @@ class FLM_GameDay_Atlanta {
         add_action('wp_ajax_flm_instagram_disconnect', [$this, 'ajax_instagram_disconnect']);
         add_action('wp_ajax_flm_instagram_test_post', [$this, 'ajax_instagram_test_post']);
         add_action('wp_ajax_flm_get_social_stats', [$this, 'ajax_get_social_stats']);
+        
+        // v2.20.0: AI Headlines, RSS Feeds, Webhooks, Analytics Export
+        add_action('wp_ajax_flm_generate_headlines', [$this, 'ajax_generate_headlines']);
+        add_action('wp_ajax_flm_export_analytics_csv', [$this, 'ajax_export_analytics_csv']);
+        add_action('wp_ajax_flm_export_analytics_pdf', [$this, 'ajax_export_analytics_pdf']);
+        add_action('wp_ajax_flm_test_webhook', [$this, 'ajax_test_webhook']);
+        add_action('wp_ajax_flm_save_webhooks', [$this, 'ajax_save_webhooks']);
+        
+        // RSS Feeds (v2.20.0)
+        add_action('init', [$this, 'register_rss_feeds']);
+        add_action('pre_get_posts', [$this, 'modify_rss_query']);
     }
     
     /**
@@ -11986,6 +12011,124 @@ class FLM_GameDay_Atlanta {
         });
     });
     
+    // v2.20.0: Webhook handlers
+    $(document).on("click", "#flm-add-webhook", function() {
+        const index = Date.now();
+        const html = `
+            <div class="flm-webhook-item" style="background:var(--flm-bg-input);border-radius:8px;padding:16px;margin-bottom:12px;border:1px solid var(--flm-border);">
+                <div style="display:flex;gap:12px;align-items:start;">
+                    <div style="flex:1;">
+                        <input type="text" name="webhooks[${index}][name]" placeholder="Webhook Name" class="flm-input flm-input-sm" style="margin-bottom:8px;">
+                        <input type="url" name="webhooks[${index}][url]" placeholder="https://..." class="flm-input flm-input-sm">
+                    </div>
+                    <div style="display:flex;flex-direction:column;gap:4px;">
+                        <label class="flm-checkbox-label" style="font-size:12px;">
+                            <input type="checkbox" name="webhooks[${index}][events][]" value="import" checked>
+                            On Import
+                        </label>
+                        <label class="flm-checkbox-label" style="font-size:12px;">
+                            <input type="checkbox" name="webhooks[${index}][events][]" value="publish">
+                            On Publish
+                        </label>
+                    </div>
+                    <div style="display:flex;gap:8px;">
+                        <label class="flm-toggle-label" style="font-size:12px;">
+                            <input type="checkbox" name="webhooks[${index}][enabled]" value="1" checked>
+                            <span class="flm-toggle flm-toggle-sm"></span>
+                        </label>
+                        <button type="button" class="flm-btn flm-btn-secondary flm-btn-sm flm-test-webhook">${flmIcons.bolt || "⚡"}</button>
+                        <button type="button" class="flm-btn flm-btn-danger flm-btn-sm flm-remove-webhook">${flmIcons.trash || "🗑"}</button>
+                    </div>
+                </div>
+            </div>`;
+        $("#flm-webhooks-list .flm-empty-state").remove();
+        $("#flm-webhooks-list").append(html);
+    });
+    
+    $(document).on("click", ".flm-remove-webhook", function() {
+        $(this).closest(".flm-webhook-item").fadeOut(200, function() { $(this).remove(); });
+    });
+    
+    $(document).on("click", ".flm-test-webhook", function() {
+        const $btn = $(this);
+        const url = $btn.closest(".flm-webhook-item").find("input[type=url]").val();
+        if (!url) {
+            showToast("Enter a webhook URL first", "warning");
+            return;
+        }
+        $btn.addClass("loading").prop("disabled", true);
+        $.ajax({
+            url: flmAdmin.ajaxUrl,
+            type: "POST",
+            data: { action: "flm_test_webhook", nonce: flmAdmin.nonce, url: url },
+            success: function(r) {
+                if (r.success) {
+                    showToast("Webhook test successful!", "success");
+                } else {
+                    showToast(r.data?.message || "Webhook test failed", "error");
+                }
+            },
+            complete: function() { $btn.removeClass("loading").prop("disabled", false); }
+        });
+    });
+    
+    // v2.20.0: Analytics Export handlers
+    $(document).on("click", "#flm-export-csv-btn", function() {
+        const $btn = $(this);
+        const days = $("#flm-export-period").val();
+        const team = $("#flm-export-team").val();
+        const include = [];
+        if ($("#flm-export-pageviews").is(":checked")) include.push("pageviews");
+        if ($("#flm-export-social").is(":checked")) include.push("social");
+        if ($("#flm-export-esp").is(":checked")) include.push("esp");
+        
+        $btn.addClass("loading").prop("disabled", true);
+        $.ajax({
+            url: flmAdmin.ajaxUrl,
+            type: "POST",
+            data: { action: "flm_export_analytics_csv", nonce: flmAdmin.nonce, days: days, team: team, include: include },
+            success: function(r) {
+                if (r.success) {
+                    const blob = new Blob([r.data.content], { type: "text/csv;charset=utf-8;" });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = r.data.filename;
+                    a.click();
+                    showToast("CSV exported successfully!", "success");
+                } else {
+                    showToast(r.data?.message || "Export failed", "error");
+                }
+            },
+            complete: function() { $btn.removeClass("loading").prop("disabled", false); }
+        });
+    });
+    
+    $(document).on("click", "#flm-export-pdf-btn", function() {
+        const $btn = $(this);
+        const days = $("#flm-export-period").val();
+        const team = $("#flm-export-team").val();
+        
+        $btn.addClass("loading").prop("disabled", true);
+        $.ajax({
+            url: flmAdmin.ajaxUrl,
+            type: "POST",
+            data: { action: "flm_export_analytics_pdf", nonce: flmAdmin.nonce, days: days, team: team },
+            success: function(r) {
+                if (r.success) {
+                    // Open HTML in new window for printing/saving as PDF
+                    const win = window.open("", "_blank");
+                    win.document.write(r.data.html);
+                    win.document.close();
+                    showToast("PDF report generated! Use browser print to save.", "success");
+                } else {
+                    showToast(r.data?.message || "Export failed", "error");
+                }
+            },
+            complete: function() { $btn.removeClass("loading").prop("disabled", false); }
+        });
+    });
+    
     // Save Settings (AJAX) - works with both Teams and Settings tab forms
     $(document).on("submit", "#flm-settings-form, #flm-settings-form-settings", function(e) {
         e.preventDefault();
@@ -15024,6 +15167,16 @@ class FLM_GameDay_Atlanta {
             'errors' => $errors,
         ]);
         
+        // Trigger webhooks (v2.20.0)
+        if ($imported > 0 || $updated > 0) {
+            $this->trigger_webhooks('import', [
+                'imported' => $imported,
+                'updated' => $updated,
+                'skipped' => $skipped,
+                'timestamp' => current_time('c'),
+            ]);
+        }
+        
         return [
             'imported' => $imported,
             'updated' => $updated,
@@ -15751,6 +15904,18 @@ class FLM_GameDay_Atlanta {
     public function handle_post_publish($new_status, $old_status, $post) {
         if ($new_status !== 'publish' || $old_status === 'publish') {
             return;
+        }
+        
+        // Trigger webhook on publish (v2.20.0) - only for FLM posts
+        $flm_story_id = get_post_meta($post->ID, 'flm_story_id', true);
+        if ($flm_story_id) {
+            $this->trigger_webhooks('publish', [
+                'post_id' => $post->ID,
+                'title' => $post->post_title,
+                'url' => get_permalink($post->ID),
+                'team' => get_post_meta($post->ID, 'flm_team', true),
+                'timestamp' => current_time('c'),
+            ]);
         }
         
         // Check if this post is in the social queue
@@ -22954,6 +23119,708 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
     }
     
     // ========================================
+    // v2.20.0: AI HEADLINE GENERATOR
+    // ========================================
+    
+    /**
+     * AJAX: Generate alternative headlines using Claude AI
+     */
+    public function ajax_generate_headlines() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Permission denied']);
+        }
+        
+        $headline = sanitize_text_field($_POST['headline'] ?? '');
+        $team = sanitize_text_field($_POST['team'] ?? '');
+        $style = sanitize_text_field($_POST['style'] ?? 'engaging');
+        
+        if (empty($headline)) {
+            wp_send_json_error(['message' => 'No headline provided']);
+        }
+        
+        $settings = $this->get_settings();
+        $api_key = $settings['claude_api_key'] ?? '';
+        
+        if (empty($api_key)) {
+            // Fallback to simple variations
+            wp_send_json_success([
+                'headlines' => $this->generate_headlines_local($headline, $team, $style),
+                'source' => 'local',
+            ]);
+        }
+        
+        $result = $this->generate_headlines_with_claude($headline, $team, $style, $api_key);
+        wp_send_json_success($result);
+    }
+    
+    /**
+     * Generate headlines using Claude API
+     */
+    private function generate_headlines_with_claude($headline, $team, $style, $api_key) {
+        $team_name = isset($this->target_teams[$team]) ? $this->target_teams[$team]['name'] : 'Atlanta sports';
+        
+        $style_instructions = [
+            'engaging' => 'Create headlines that drive clicks and engagement. Use action verbs, emotion, and urgency.',
+            'seo' => 'Create SEO-optimized headlines with relevant keywords, proper length (50-60 chars), clear topic.',
+            'social' => 'Create social media friendly headlines - punchy, shareable, with hook. Include relevant hashtag suggestions.',
+            'newsbreak' => 'Create headlines optimized for NewsBreak syndication - factual, clear, avoids clickbait.',
+            'professional' => 'Create professional sports journalism headlines - factual, authoritative, AP style.',
+        ];
+        
+        $prompt = "You are a sports news headline expert. Generate 5 alternative headlines for this article.
+
+Original headline: \"{$headline}\"
+Team context: {$team_name}
+Style: {$style}
+Instructions: {$style_instructions[$style]}
+
+Respond in JSON format only:
+{
+    \"headlines\": [
+        {\"text\": \"<headline 1>\", \"score\": <engagement score 0-100>},
+        {\"text\": \"<headline 2>\", \"score\": <engagement score 0-100>},
+        {\"text\": \"<headline 3>\", \"score\": <engagement score 0-100>},
+        {\"text\": \"<headline 4>\", \"score\": <engagement score 0-100>},
+        {\"text\": \"<headline 5>\", \"score\": <engagement score 0-100>}
+    ],
+    \"best_pick\": <index 0-4 of recommended headline>,
+    \"reasoning\": \"<brief explanation of best pick>\"
+}";
+
+        $response = wp_remote_post($this->integration_endpoints['claude'], [
+            'headers' => [
+                'Content-Type' => 'application/json',
+                'x-api-key' => $api_key,
+                'anthropic-version' => '2023-06-01',
+            ],
+            'body' => json_encode([
+                'model' => 'claude-sonnet-4-20250514',
+                'max_tokens' => 1024,
+                'messages' => [
+                    ['role' => 'user', 'content' => $prompt]
+                ]
+            ]),
+            'timeout' => 30,
+        ]);
+        
+        if (is_wp_error($response)) {
+            return [
+                'headlines' => $this->generate_headlines_local($headline, $team, $style),
+                'source' => 'local',
+                'error' => $response->get_error_message(),
+            ];
+        }
+        
+        $body = json_decode(wp_remote_retrieve_body($response), true);
+        
+        if (!empty($body['content'][0]['text'])) {
+            $text = $body['content'][0]['text'];
+            if (preg_match('/\{[\s\S]*\}/', $text, $matches)) {
+                $result = json_decode($matches[0], true);
+                if ($result && !empty($result['headlines'])) {
+                    $result['source'] = 'claude';
+                    return $result;
+                }
+            }
+        }
+        
+        return [
+            'headlines' => $this->generate_headlines_local($headline, $team, $style),
+            'source' => 'local',
+        ];
+    }
+    
+    /**
+     * Generate headlines locally (fallback)
+     */
+    private function generate_headlines_local($headline, $team, $style) {
+        $variations = [];
+        $team_name = isset($this->target_teams[$team]) ? $this->target_teams[$team]['name'] : '';
+        
+        // Simple variations based on patterns
+        $base = trim($headline);
+        
+        // Variation 1: Add urgency
+        $variations[] = ['text' => 'BREAKING: ' . $base, 'score' => 75];
+        
+        // Variation 2: Question format
+        $variations[] = ['text' => 'What ' . $base . ' Means for Fans', 'score' => 70];
+        
+        // Variation 3: Add team name if not present
+        if ($team_name && stripos($base, $team_name) === false) {
+            $variations[] = ['text' => $team_name . ': ' . $base, 'score' => 72];
+        } else {
+            $variations[] = ['text' => 'Report: ' . $base, 'score' => 68];
+        }
+        
+        // Variation 4: Shorter version
+        $words = explode(' ', $base);
+        if (count($words) > 6) {
+            $variations[] = ['text' => implode(' ', array_slice($words, 0, 6)) . '...', 'score' => 65];
+        } else {
+            $variations[] = ['text' => $base . ' | Full Story', 'score' => 65];
+        }
+        
+        // Variation 5: Analysis angle
+        $variations[] = ['text' => 'Analysis: ' . $base, 'score' => 67];
+        
+        return $variations;
+    }
+    
+    // ========================================
+    // v2.20.0: RSS FEED SYSTEM
+    // ========================================
+    
+    /**
+     * Register custom RSS feeds
+     */
+    public function register_rss_feeds() {
+        $settings = $this->get_settings();
+        
+        if (empty($settings['rss_enabled'])) {
+            return;
+        }
+        
+        // Combined feed for all FLM content
+        if (!empty($settings['rss_combined_feed'])) {
+            add_feed('gameday-atlanta', [$this, 'render_combined_rss_feed']);
+        }
+        
+        // Per-team feeds
+        if (!empty($settings['rss_per_team_feeds'])) {
+            foreach ($this->target_teams as $team_key => $team_config) {
+                add_feed('gameday-' . $team_key, function() use ($team_key) {
+                    $this->render_team_rss_feed($team_key);
+                });
+            }
+        }
+    }
+    
+    /**
+     * Render combined RSS feed
+     */
+    public function render_combined_rss_feed() {
+        $settings = $this->get_settings();
+        $items_count = intval($settings['rss_items_count'] ?? 20);
+        $include_full = !empty($settings['rss_include_full_content']);
+        
+        $posts = get_posts([
+            'post_type' => 'post',
+            'post_status' => 'publish',
+            'posts_per_page' => $items_count,
+            'meta_query' => [
+                ['key' => 'flm_story_id', 'compare' => 'EXISTS']
+            ],
+            'orderby' => 'date',
+            'order' => 'DESC',
+        ]);
+        
+        $this->output_rss_feed($posts, 'GameDay Atlanta - All Teams', 'Latest Atlanta sports news from all teams', $include_full);
+    }
+    
+    /**
+     * Render per-team RSS feed
+     */
+    public function render_team_rss_feed($team_key) {
+        $settings = $this->get_settings();
+        $items_count = intval($settings['rss_items_count'] ?? 20);
+        $include_full = !empty($settings['rss_include_full_content']);
+        
+        $team_config = $this->target_teams[$team_key] ?? null;
+        if (!$team_config) {
+            wp_die('Invalid team');
+        }
+        
+        // Get category for this team
+        $category = get_term_by('name', $team_config['category_name'], 'category');
+        
+        $args = [
+            'post_type' => 'post',
+            'post_status' => 'publish',
+            'posts_per_page' => $items_count,
+            'meta_query' => [
+                ['key' => 'flm_story_id', 'compare' => 'EXISTS'],
+                ['key' => 'flm_team', 'value' => $team_key],
+            ],
+            'orderby' => 'date',
+            'order' => 'DESC',
+        ];
+        
+        // Also include by category if exists
+        if ($category) {
+            $args['category__in'] = [$category->term_id];
+            unset($args['meta_query'][1]); // Remove team meta if using category
+        }
+        
+        $posts = get_posts($args);
+        
+        $this->output_rss_feed(
+            $posts, 
+            'GameDay Atlanta - ' . $team_config['name'], 
+            'Latest ' . $team_config['name'] . ' news',
+            $include_full
+        );
+    }
+    
+    /**
+     * Output RSS feed XML
+     */
+    private function output_rss_feed($posts, $title, $description, $include_full = false) {
+        header('Content-Type: application/rss+xml; charset=UTF-8');
+        
+        echo '<?xml version="1.0" encoding="UTF-8"?>' . "\n";
+        ?>
+<rss version="2.0" 
+     xmlns:atom="http://www.w3.org/2005/Atom"
+     xmlns:content="http://purl.org/rss/1.0/modules/content/"
+     xmlns:media="http://search.yahoo.com/mrss/">
+<channel>
+    <title><?php echo esc_html($title); ?></title>
+    <link><?php echo esc_url(home_url()); ?></link>
+    <description><?php echo esc_html($description); ?></description>
+    <language>en-US</language>
+    <lastBuildDate><?php echo date('r'); ?></lastBuildDate>
+    <atom:link href="<?php echo esc_url($_SERVER['REQUEST_URI']); ?>" rel="self" type="application/rss+xml"/>
+    <generator>FLM GameDay Atlanta v<?php echo esc_html($this->version); ?></generator>
+    <?php foreach ($posts as $post): 
+        $thumbnail = get_the_post_thumbnail_url($post->ID, 'large');
+        $categories = get_the_category($post->ID);
+        $team = get_post_meta($post->ID, 'flm_team', true);
+        $story_type = get_post_meta($post->ID, 'flm_story_type', true);
+    ?>
+    <item>
+        <title><?php echo esc_html($post->post_title); ?></title>
+        <link><?php echo esc_url(get_permalink($post->ID)); ?></link>
+        <guid isPermaLink="true"><?php echo esc_url(get_permalink($post->ID)); ?></guid>
+        <pubDate><?php echo get_the_date('r', $post); ?></pubDate>
+        <description><![CDATA[<?php echo wp_trim_words($post->post_content, 50, '...'); ?>]]></description>
+        <?php if ($include_full): ?>
+        <content:encoded><![CDATA[<?php echo apply_filters('the_content', $post->post_content); ?>]]></content:encoded>
+        <?php endif; ?>
+        <?php foreach ($categories as $cat): ?>
+        <category><?php echo esc_html($cat->name); ?></category>
+        <?php endforeach; ?>
+        <?php if ($thumbnail): ?>
+        <media:content url="<?php echo esc_url($thumbnail); ?>" medium="image"/>
+        <enclosure url="<?php echo esc_url($thumbnail); ?>" type="image/jpeg"/>
+        <?php endif; ?>
+        <?php if ($team): ?>
+        <source url="<?php echo esc_url(home_url('/feed/gameday-' . $team)); ?>"><?php echo esc_html($this->target_teams[$team]['name'] ?? $team); ?></source>
+        <?php endif; ?>
+    </item>
+    <?php endforeach; ?>
+</channel>
+</rss>
+        <?php
+        exit;
+    }
+    
+    /**
+     * Modify RSS query if needed
+     */
+    public function modify_rss_query($query) {
+        // This hook is available for future RSS customization
+        return $query;
+    }
+    
+    /**
+     * Get all RSS feed URLs
+     */
+    public function get_rss_feed_urls() {
+        $settings = $this->get_settings();
+        $feeds = [];
+        
+        if (!empty($settings['rss_enabled'])) {
+            if (!empty($settings['rss_combined_feed'])) {
+                $feeds['all'] = [
+                    'name' => 'All Teams',
+                    'url' => home_url('/feed/gameday-atlanta/'),
+                ];
+            }
+            
+            if (!empty($settings['rss_per_team_feeds'])) {
+                foreach ($this->target_teams as $team_key => $team_config) {
+                    if (!empty($settings['teams_enabled'][$team_key])) {
+                        $feeds[$team_key] = [
+                            'name' => $team_config['name'],
+                            'url' => home_url('/feed/gameday-' . $team_key . '/'),
+                        ];
+                    }
+                }
+            }
+        }
+        
+        return $feeds;
+    }
+    
+    // ========================================
+    // v2.20.0: WEBHOOK SYSTEM
+    // ========================================
+    
+    /**
+     * AJAX: Test webhook
+     */
+    public function ajax_test_webhook() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Permission denied']);
+        }
+        
+        $url = esc_url_raw($_POST['url'] ?? '');
+        
+        if (empty($url)) {
+            wp_send_json_error(['message' => 'No webhook URL provided']);
+        }
+        
+        $test_payload = [
+            'event' => 'test',
+            'timestamp' => current_time('c'),
+            'source' => 'FLM GameDay Atlanta v' . $this->version,
+            'site' => home_url(),
+            'message' => 'Webhook test successful!',
+        ];
+        
+        $result = $this->send_webhook($url, $test_payload);
+        
+        if ($result['success']) {
+            wp_send_json_success([
+                'message' => 'Webhook test successful',
+                'response_code' => $result['response_code'],
+            ]);
+        } else {
+            wp_send_json_error([
+                'message' => $result['error'],
+                'response_code' => $result['response_code'] ?? null,
+            ]);
+        }
+    }
+    
+    /**
+     * AJAX: Save webhooks configuration
+     */
+    public function ajax_save_webhooks() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Permission denied']);
+        }
+        
+        $webhooks = [];
+        $webhook_data = $_POST['webhooks'] ?? [];
+        
+        foreach ($webhook_data as $webhook) {
+            $url = esc_url_raw($webhook['url'] ?? '');
+            if (empty($url)) continue;
+            
+            $webhooks[] = [
+                'name' => sanitize_text_field($webhook['name'] ?? 'Webhook'),
+                'url' => $url,
+                'events' => array_map('sanitize_text_field', (array)($webhook['events'] ?? ['import'])),
+                'enabled' => !empty($webhook['enabled']),
+            ];
+        }
+        
+        $settings = $this->get_settings();
+        $settings['webhooks'] = $webhooks;
+        update_option('flm_settings', $settings);
+        
+        wp_send_json_success(['message' => 'Webhooks saved', 'count' => count($webhooks)]);
+    }
+    
+    /**
+     * Send webhook notification
+     */
+    public function send_webhook($url, $payload) {
+        $response = wp_remote_post($url, [
+            'headers' => [
+                'Content-Type' => 'application/json',
+                'User-Agent' => 'FLM-GameDay-Atlanta/' . $this->version,
+            ],
+            'body' => json_encode($payload),
+            'timeout' => 15,
+        ]);
+        
+        if (is_wp_error($response)) {
+            return [
+                'success' => false,
+                'error' => $response->get_error_message(),
+            ];
+        }
+        
+        $code = wp_remote_retrieve_response_code($response);
+        
+        return [
+            'success' => ($code >= 200 && $code < 300),
+            'response_code' => $code,
+            'error' => ($code >= 200 && $code < 300) ? null : 'HTTP ' . $code,
+        ];
+    }
+    
+    /**
+     * Trigger webhooks for an event
+     */
+    public function trigger_webhooks($event, $data) {
+        $settings = $this->get_settings();
+        $webhooks = $settings['webhooks'] ?? [];
+        
+        foreach ($webhooks as $webhook) {
+            if (empty($webhook['enabled'])) continue;
+            if (!in_array($event, $webhook['events'])) continue;
+            
+            $payload = [
+                'event' => $event,
+                'timestamp' => current_time('c'),
+                'source' => 'FLM GameDay Atlanta',
+                'data' => $data,
+            ];
+            
+            // Fire and forget - don't wait for response
+            wp_remote_post($webhook['url'], [
+                'headers' => [
+                    'Content-Type' => 'application/json',
+                    'User-Agent' => 'FLM-GameDay-Atlanta/' . $this->version,
+                ],
+                'body' => json_encode($payload),
+                'timeout' => 5,
+                'blocking' => false,
+            ]);
+        }
+    }
+    
+    // ========================================
+    // v2.20.0: ANALYTICS EXPORT
+    // ========================================
+    
+    /**
+     * AJAX: Export analytics as CSV
+     */
+    public function ajax_export_analytics_csv() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Permission denied']);
+        }
+        
+        $days = intval($_POST['days'] ?? 30);
+        $team = sanitize_text_field($_POST['team'] ?? 'all');
+        $include = $_POST['include'] ?? ['pageviews', 'social', 'esp'];
+        
+        $data = $this->gather_export_data($days, $team, $include);
+        
+        // Build CSV
+        $csv_lines = [];
+        
+        // Header
+        $headers = ['Post ID', 'Title', 'Team', 'Published', 'Type'];
+        if (in_array('pageviews', $include)) {
+            $headers = array_merge($headers, ['Pageviews', 'Unique Views']);
+        }
+        if (in_array('social', $include)) {
+            $headers = array_merge($headers, ['Social Shares', 'Twitter', 'Facebook']);
+        }
+        if (in_array('esp', $include)) {
+            $headers = array_merge($headers, ['Email Clicks', 'Newsletter Opens']);
+        }
+        
+        $csv_lines[] = implode(',', $headers);
+        
+        // Data rows
+        foreach ($data['posts'] as $post) {
+            $row = [
+                $post['id'],
+                '"' . str_replace('"', '""', $post['title']) . '"',
+                $post['team'],
+                $post['published'],
+                $post['type'],
+            ];
+            
+            if (in_array('pageviews', $include)) {
+                $row[] = $post['pageviews'] ?? 0;
+                $row[] = $post['unique_views'] ?? 0;
+            }
+            if (in_array('social', $include)) {
+                $row[] = $post['social_shares'] ?? 0;
+                $row[] = $post['twitter_shares'] ?? 0;
+                $row[] = $post['facebook_shares'] ?? 0;
+            }
+            if (in_array('esp', $include)) {
+                $row[] = $post['email_clicks'] ?? 0;
+                $row[] = $post['newsletter_opens'] ?? 0;
+            }
+            
+            $csv_lines[] = implode(',', $row);
+        }
+        
+        $csv_content = implode("\n", $csv_lines);
+        $filename = 'flm-analytics-' . date('Y-m-d') . '.csv';
+        
+        wp_send_json_success([
+            'filename' => $filename,
+            'content' => $csv_content,
+            'summary' => $data['summary'],
+        ]);
+    }
+    
+    /**
+     * AJAX: Export analytics as PDF
+     */
+    public function ajax_export_analytics_pdf() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Permission denied']);
+        }
+        
+        $days = intval($_POST['days'] ?? 30);
+        $team = sanitize_text_field($_POST['team'] ?? 'all');
+        
+        $data = $this->gather_export_data($days, $team, ['pageviews', 'social', 'esp']);
+        
+        // Generate HTML for PDF (can be converted client-side using jsPDF)
+        $html = $this->generate_pdf_html($data, $days, $team);
+        
+        wp_send_json_success([
+            'html' => $html,
+            'summary' => $data['summary'],
+            'filename' => 'flm-report-' . date('Y-m-d') . '.pdf',
+        ]);
+    }
+    
+    /**
+     * Gather export data
+     */
+    private function gather_export_data($days, $team, $include) {
+        $args = [
+            'post_type' => 'post',
+            'post_status' => 'publish',
+            'posts_per_page' => -1,
+            'date_query' => [
+                ['after' => $days . ' days ago']
+            ],
+            'meta_query' => [
+                ['key' => 'flm_story_id', 'compare' => 'EXISTS']
+            ],
+        ];
+        
+        if ($team !== 'all') {
+            $args['meta_query'][] = ['key' => 'flm_team', 'value' => $team];
+        }
+        
+        $posts = get_posts($args);
+        $data = ['posts' => [], 'summary' => []];
+        
+        $total_views = 0;
+        $total_social = 0;
+        $total_email = 0;
+        
+        foreach ($posts as $post) {
+            $pageviews = intval(get_post_meta($post->ID, 'flm_pageviews', true));
+            $unique_views = intval(get_post_meta($post->ID, 'flm_unique_views', true));
+            $social_shares = intval(get_post_meta($post->ID, 'flm_social_shares', true));
+            $email_clicks = intval(get_post_meta($post->ID, 'flm_email_clicks', true));
+            
+            $total_views += $pageviews;
+            $total_social += $social_shares;
+            $total_email += $email_clicks;
+            
+            $data['posts'][] = [
+                'id' => $post->ID,
+                'title' => $post->post_title,
+                'team' => get_post_meta($post->ID, 'flm_team', true),
+                'published' => get_the_date('Y-m-d H:i', $post),
+                'type' => get_post_meta($post->ID, 'flm_story_type', true),
+                'pageviews' => $pageviews,
+                'unique_views' => $unique_views,
+                'social_shares' => $social_shares,
+                'email_clicks' => $email_clicks,
+            ];
+        }
+        
+        $data['summary'] = [
+            'total_posts' => count($posts),
+            'total_pageviews' => $total_views,
+            'total_social_shares' => $total_social,
+            'total_email_clicks' => $total_email,
+            'avg_views_per_post' => count($posts) > 0 ? round($total_views / count($posts), 1) : 0,
+            'period_days' => $days,
+            'team_filter' => $team,
+        ];
+        
+        return $data;
+    }
+    
+    /**
+     * Generate HTML for PDF export
+     */
+    private function generate_pdf_html($data, $days, $team) {
+        $team_name = ($team === 'all') ? 'All Teams' : ($this->target_teams[$team]['name'] ?? $team);
+        
+        $html = '
+        <div style="font-family: Arial, sans-serif; padding: 20px;">
+            <h1 style="color: #1e3a5f; margin-bottom: 5px;">GameDay Atlanta Analytics Report</h1>
+            <p style="color: #666; margin-top: 0;">Generated: ' . date('F j, Y') . ' | Period: Last ' . $days . ' days | Team: ' . esc_html($team_name) . '</p>
+            
+            <div style="display: flex; gap: 20px; margin: 20px 0;">
+                <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; flex: 1;">
+                    <div style="font-size: 24px; font-weight: bold; color: #1e3a5f;">' . number_format($data['summary']['total_posts']) . '</div>
+                    <div style="color: #666;">Articles Published</div>
+                </div>
+                <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; flex: 1;">
+                    <div style="font-size: 24px; font-weight: bold; color: #1e3a5f;">' . number_format($data['summary']['total_pageviews']) . '</div>
+                    <div style="color: #666;">Total Pageviews</div>
+                </div>
+                <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; flex: 1;">
+                    <div style="font-size: 24px; font-weight: bold; color: #1e3a5f;">' . number_format($data['summary']['avg_views_per_post']) . '</div>
+                    <div style="color: #666;">Avg Views/Post</div>
+                </div>
+            </div>
+            
+            <h2 style="color: #1e3a5f; margin-top: 30px;">Top Performing Articles</h2>
+            <table style="width: 100%; border-collapse: collapse;">
+                <thead>
+                    <tr style="background: #1e3a5f; color: white;">
+                        <th style="padding: 10px; text-align: left;">Title</th>
+                        <th style="padding: 10px; text-align: left;">Team</th>
+                        <th style="padding: 10px; text-align: right;">Views</th>
+                    </tr>
+                </thead>
+                <tbody>';
+        
+        // Sort by pageviews and show top 20
+        usort($data['posts'], function($a, $b) {
+            return ($b['pageviews'] ?? 0) - ($a['pageviews'] ?? 0);
+        });
+        
+        $top_posts = array_slice($data['posts'], 0, 20);
+        $row_num = 0;
+        
+        foreach ($top_posts as $post) {
+            $bg = ($row_num % 2 === 0) ? '#ffffff' : '#f8f9fa';
+            $html .= '
+                    <tr style="background: ' . $bg . ';">
+                        <td style="padding: 10px; border-bottom: 1px solid #eee;">' . esc_html(wp_trim_words($post['title'], 10)) . '</td>
+                        <td style="padding: 10px; border-bottom: 1px solid #eee;">' . esc_html($post['team']) . '</td>
+                        <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: right;">' . number_format($post['pageviews']) . '</td>
+                    </tr>';
+            $row_num++;
+        }
+        
+        $html .= '
+                </tbody>
+            </table>
+            
+            <p style="color: #999; font-size: 12px; margin-top: 30px; text-align: center;">
+                Generated by FLM GameDay Atlanta v' . esc_html($this->version) . ' | ' . esc_html(home_url()) . '
+            </p>
+        </div>';
+        
+        return $html;
+    }
+    
+    // ========================================
     // GITHUB AUTO-UPDATES v2.17.0
     // ========================================
     
@@ -27341,6 +28208,202 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
                                                 </p>
                                             </div>
                                         </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- RSS Feeds (v2.20.0) -->
+                            <div class="flm-card" style="margin-top:24px;">
+                                <div class="flm-card-header">
+                                    <h2 class="flm-card-title">
+                                        <span class="flm-card-icon" style="background:linear-gradient(135deg, #f97316, #ea580c);"><?php echo $this->icon('share'); ?></span>
+                                        RSS Feeds
+                                        <span class="flm-badge" style="background:rgba(249,115,22,0.15);color:#f97316;margin-left:8px;">v2.20.0</span>
+                                    </h2>
+                                </div>
+                                <div class="flm-card-body">
+                                    <p style="margin:0 0 20px;color:var(--flm-text-muted);">
+                                        Generate RSS feeds for syndication to NewsBreak, Flipboard, Apple News, and other platforms.
+                                    </p>
+                                    
+                                    <div class="flm-form-group">
+                                        <label class="flm-toggle-label">
+                                            <input type="checkbox" name="flm_settings[rss_enabled]" value="1" <?php checked($settings['rss_enabled'] ?? true); ?>>
+                                            <span class="flm-toggle"></span>
+                                            <span>Enable RSS Feeds</span>
+                                        </label>
+                                    </div>
+                                    
+                                    <div class="flm-form-row" style="margin-top:16px;">
+                                        <div class="flm-form-group">
+                                            <label>Items Per Feed</label>
+                                            <select name="flm_settings[rss_items_count]" class="flm-select">
+                                                <option value="10" <?php selected($settings['rss_items_count'] ?? 20, 10); ?>>10 items</option>
+                                                <option value="20" <?php selected($settings['rss_items_count'] ?? 20, 20); ?>>20 items</option>
+                                                <option value="50" <?php selected($settings['rss_items_count'] ?? 20, 50); ?>>50 items</option>
+                                            </select>
+                                        </div>
+                                        <div class="flm-form-group">
+                                            <label class="flm-toggle-label" style="margin-top:28px;">
+                                                <input type="checkbox" name="flm_settings[rss_include_full_content]" value="1" <?php checked($settings['rss_include_full_content'] ?? false); ?>>
+                                                <span class="flm-toggle"></span>
+                                                <span>Include Full Content</span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="flm-form-row" style="margin-top:16px;">
+                                        <div class="flm-form-group">
+                                            <label class="flm-toggle-label">
+                                                <input type="checkbox" name="flm_settings[rss_combined_feed]" value="1" <?php checked($settings['rss_combined_feed'] ?? true); ?>>
+                                                <span class="flm-toggle"></span>
+                                                <span>Combined Feed (All Teams)</span>
+                                            </label>
+                                        </div>
+                                        <div class="flm-form-group">
+                                            <label class="flm-toggle-label">
+                                                <input type="checkbox" name="flm_settings[rss_per_team_feeds]" value="1" <?php checked($settings['rss_per_team_feeds'] ?? true); ?>>
+                                                <span class="flm-toggle"></span>
+                                                <span>Per-Team Feeds</span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                    
+                                    <?php $feeds = $this->get_rss_feed_urls(); ?>
+                                    <?php if (!empty($feeds)): ?>
+                                    <div style="background:var(--flm-bg-input);border-radius:8px;padding:16px;margin-top:20px;border:1px solid var(--flm-border);">
+                                        <div style="font-weight:600;margin-bottom:12px;font-size:14px;">Available Feeds</div>
+                                        <div style="display:grid;gap:8px;">
+                                            <?php foreach ($feeds as $key => $feed): ?>
+                                            <div style="display:flex;align-items:center;gap:12px;padding:8px 12px;background:var(--flm-bg);border-radius:6px;">
+                                                <span style="font-size:13px;font-weight:500;min-width:100px;"><?php echo esc_html($feed['name']); ?></span>
+                                                <code style="flex:1;font-size:11px;background:var(--flm-bg-input);padding:4px 8px;border-radius:4px;overflow:hidden;text-overflow:ellipsis;"><?php echo esc_url($feed['url']); ?></code>
+                                                <a href="<?php echo esc_url($feed['url']); ?>" target="_blank" class="flm-btn flm-btn-secondary flm-btn-sm"><?php echo $this->icon('external'); ?></a>
+                                            </div>
+                                            <?php endforeach; ?>
+                                        </div>
+                                    </div>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
+                            
+                            <!-- Webhooks (v2.20.0) -->
+                            <div class="flm-card" style="margin-top:24px;">
+                                <div class="flm-card-header">
+                                    <h2 class="flm-card-title">
+                                        <span class="flm-card-icon" style="background:linear-gradient(135deg, #8b5cf6, #7c3aed);"><?php echo $this->icon('bolt'); ?></span>
+                                        Webhooks
+                                        <span class="flm-badge" style="background:rgba(139,92,246,0.15);color:#8b5cf6;margin-left:8px;">v2.20.0</span>
+                                    </h2>
+                                    <button type="button" id="flm-add-webhook" class="flm-btn flm-btn-secondary flm-btn-sm">
+                                        <?php echo $this->icon('plus'); ?> Add Webhook
+                                    </button>
+                                </div>
+                                <div class="flm-card-body">
+                                    <p style="margin:0 0 20px;color:var(--flm-text-muted);">
+                                        Send notifications to external systems when content is imported or published.
+                                    </p>
+                                    
+                                    <div id="flm-webhooks-list">
+                                        <?php 
+                                        $webhooks = $settings['webhooks'] ?? [];
+                                        if (empty($webhooks)): 
+                                        ?>
+                                        <div class="flm-empty-state" style="padding:30px;text-align:center;color:var(--flm-text-muted);">
+                                            <div style="font-size:32px;margin-bottom:8px;"><?php echo $this->icon('bolt'); ?></div>
+                                            <div>No webhooks configured</div>
+                                            <div style="font-size:12px;margin-top:4px;">Add a webhook to send notifications to Zapier, Make, n8n, or any HTTP endpoint</div>
+                                        </div>
+                                        <?php else: ?>
+                                        <?php foreach ($webhooks as $index => $webhook): ?>
+                                        <div class="flm-webhook-item" style="background:var(--flm-bg-input);border-radius:8px;padding:16px;margin-bottom:12px;border:1px solid var(--flm-border);">
+                                            <div style="display:flex;gap:12px;align-items:start;">
+                                                <div style="flex:1;">
+                                                    <input type="text" name="webhooks[<?php echo $index; ?>][name]" value="<?php echo esc_attr($webhook['name']); ?>" placeholder="Webhook Name" class="flm-input flm-input-sm" style="margin-bottom:8px;">
+                                                    <input type="url" name="webhooks[<?php echo $index; ?>][url]" value="<?php echo esc_url($webhook['url']); ?>" placeholder="https://..." class="flm-input flm-input-sm">
+                                                </div>
+                                                <div style="display:flex;flex-direction:column;gap:4px;">
+                                                    <label class="flm-checkbox-label" style="font-size:12px;">
+                                                        <input type="checkbox" name="webhooks[<?php echo $index; ?>][events][]" value="import" <?php checked(in_array('import', $webhook['events'] ?? [])); ?>>
+                                                        On Import
+                                                    </label>
+                                                    <label class="flm-checkbox-label" style="font-size:12px;">
+                                                        <input type="checkbox" name="webhooks[<?php echo $index; ?>][events][]" value="publish" <?php checked(in_array('publish', $webhook['events'] ?? [])); ?>>
+                                                        On Publish
+                                                    </label>
+                                                </div>
+                                                <div style="display:flex;gap:8px;">
+                                                    <label class="flm-toggle-label" style="font-size:12px;">
+                                                        <input type="checkbox" name="webhooks[<?php echo $index; ?>][enabled]" value="1" <?php checked($webhook['enabled'] ?? false); ?>>
+                                                        <span class="flm-toggle flm-toggle-sm"></span>
+                                                    </label>
+                                                    <button type="button" class="flm-btn flm-btn-secondary flm-btn-sm flm-test-webhook" data-url="<?php echo esc_url($webhook['url']); ?>"><?php echo $this->icon('bolt'); ?></button>
+                                                    <button type="button" class="flm-btn flm-btn-danger flm-btn-sm flm-remove-webhook"><?php echo $this->icon('trash'); ?></button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <?php endforeach; ?>
+                                        <?php endif; ?>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Analytics Export (v2.20.0) -->
+                            <div class="flm-card" style="margin-top:24px;">
+                                <div class="flm-card-header">
+                                    <h2 class="flm-card-title">
+                                        <span class="flm-card-icon" style="background:linear-gradient(135deg, #10b981, #059669);"><?php echo $this->icon('chart'); ?></span>
+                                        Analytics Export
+                                        <span class="flm-badge" style="background:rgba(16,185,129,0.15);color:#10b981;margin-left:8px;">v2.20.0</span>
+                                    </h2>
+                                </div>
+                                <div class="flm-card-body">
+                                    <p style="margin:0 0 20px;color:var(--flm-text-muted);">
+                                        Export content performance data as CSV or PDF reports.
+                                    </p>
+                                    
+                                    <div class="flm-form-row" style="align-items:end;">
+                                        <div class="flm-form-group">
+                                            <label>Time Period</label>
+                                            <select id="flm-export-period" class="flm-select">
+                                                <option value="7">Last 7 days</option>
+                                                <option value="30" selected>Last 30 days</option>
+                                                <option value="90">Last 90 days</option>
+                                                <option value="365">Last year</option>
+                                            </select>
+                                        </div>
+                                        <div class="flm-form-group">
+                                            <label>Team Filter</label>
+                                            <select id="flm-export-team" class="flm-select">
+                                                <option value="all">All Teams</option>
+                                                <?php foreach ($this->target_teams as $key => $team): ?>
+                                                <option value="<?php echo esc_attr($key); ?>"><?php echo esc_html($team['name']); ?></option>
+                                                <?php endforeach; ?>
+                                            </select>
+                                        </div>
+                                        <div class="flm-form-group" style="display:flex;gap:8px;">
+                                            <button type="button" id="flm-export-csv-btn" class="flm-btn flm-btn-secondary">
+                                                <?php echo $this->icon('download'); ?> Export CSV
+                                            </button>
+                                            <button type="button" id="flm-export-pdf-btn" class="flm-btn flm-btn-primary">
+                                                <?php echo $this->icon('download'); ?> Export PDF
+                                            </button>
+                                        </div>
+                                    </div>
+                                    
+                                    <div style="display:flex;gap:16px;margin-top:16px;">
+                                        <label class="flm-checkbox-label">
+                                            <input type="checkbox" id="flm-export-pageviews" checked>
+                                            Include Pageviews
+                                        </label>
+                                        <label class="flm-checkbox-label">
+                                            <input type="checkbox" id="flm-export-social" checked>
+                                            Include Social
+                                        </label>
+                                        <label class="flm-checkbox-label">
+                                            <input type="checkbox" id="flm-export-esp" checked>
+                                            Include Email Stats
+                                        </label>
                                     </div>
                                 </div>
                             </div>
