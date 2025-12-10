@@ -3,7 +3,7 @@
  * Plugin Name: FLM GameDay Atlanta
  * Plugin URI: https://github.com/mainlinemedia/flm-gameday-atlanta
  * Description: Import Braves, Hawks, Falcons, United, Dream, UGA & GT content from Field Level Media with AI enhancement, social posting, and analytics.
- * Version: 2.18.5
+ * Version: 2.19.0
  * Author: Austin / Mainline Media Group
  * Author URI: https://mainlinemediagroup.com
  * License: Proprietary
@@ -20,7 +20,7 @@ if (!defined('ABSPATH')) exit;
 class FLM_GameDay_Atlanta {
     
     private $api_base = 'https://api.fieldlevelmedia.com/v1';
-    private $version = '2.18.5';
+    private $version = '2.19.0';
     
     // GitHub Update Configuration
     private $github_username = 'mainlinemedia';
@@ -352,6 +352,7 @@ class FLM_GameDay_Atlanta {
         add_action('wp_ajax_flm_selective_import', [$this, 'ajax_selective_import']);
         add_action('wp_ajax_flm_purge_old_posts', [$this, 'ajax_purge_old_posts']);
         add_action('wp_ajax_flm_dismiss_onboarding', [$this, 'ajax_dismiss_onboarding']);
+        add_action('wp_ajax_flm_fix_cron', [$this, 'ajax_fix_cron']);
         
         // Pageview tracking AJAX (both logged in and logged out)
         add_action('wp_ajax_flm_record_pageview', [$this, 'ajax_record_pageview']);
@@ -484,6 +485,7 @@ class FLM_GameDay_Atlanta {
             'baseball' => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M4.93 4.93c4.08 2.38 6.24 5.73 6.24 10.14M19.07 4.93c-4.08 2.38-6.24 5.73-6.24 10.14"/></svg>',
             'football' => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="12" rx="4" ry="9" transform="rotate(45 12 12)"/><path d="M9 9l6 6M15 9l-6 6"/></svg>',
             'basketball' => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a10 10 0 010 20M12 2a15 15 0 014 10 15 15 0 01-4 10M12 2a15 15 0 00-4 10 15 15 0 004 10"/></svg>',
+            'gamepad' => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 12h4M8 10v4M15 11h.01M18 13h.01"/></svg>',
             'save' => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>',
             'spinner' => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>',
             'preview' => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>',
@@ -11952,6 +11954,38 @@ class FLM_GameDay_Atlanta {
         $("#flm-run-import").click();
     });
     
+    // Fix Cron button
+    $(document).on("click", "#flm-fix-cron", function(e) {
+        e.preventDefault();
+        const $btn = $(this);
+        $btn.text("Fixing...").css("pointer-events", "none");
+        
+        $.ajax({
+            url: flmAdmin.ajaxUrl,
+            type: "POST",
+            data: {
+                action: "flm_fix_cron",
+                nonce: flmAdmin.nonce
+            },
+            success: function(response) {
+                if (response.success) {
+                    showToast("Auto-import schedule restored! Next run: " + response.data.next_run, "success");
+                    // Reload to update status display
+                    setTimeout(function() {
+                        location.reload();
+                    }, 1500);
+                } else {
+                    showToast(response.data?.message || "Failed to fix cron", "error");
+                    $btn.text("Fix Cron →").css("pointer-events", "auto");
+                }
+            },
+            error: function() {
+                showToast("Network error fixing cron", "error");
+                $btn.text("Fix Cron →").css("pointer-events", "auto");
+            }
+        });
+    });
+    
     // Save Settings (AJAX) - works with both Teams and Settings tab forms
     $(document).on("submit", "#flm-settings-form, #flm-settings-form-settings", function(e) {
         e.preventDefault();
@@ -16275,6 +16309,39 @@ class FLM_GameDay_Atlanta {
         update_option('flm_onboarding_dismissed', true);
         
         wp_send_json_success(['message' => 'Onboarding dismissed']);
+    }
+    
+    /**
+     * AJAX: Fix cron schedule
+     */
+    public function ajax_fix_cron() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Permission denied']);
+        }
+        
+        // Clear any existing schedule
+        wp_clear_scheduled_hook('flm_import_stories');
+        
+        // Get the configured frequency
+        $settings = $this->get_settings();
+        $frequency = $settings['import_frequency'] ?? 'hourly';
+        
+        // Schedule new cron
+        $scheduled = wp_schedule_event(time() + 60, $frequency, 'flm_import_stories');
+        
+        if ($scheduled === false) {
+            wp_send_json_error(['message' => 'Failed to schedule cron event']);
+        }
+        
+        $next_run = wp_next_scheduled('flm_import_stories');
+        $next_run_display = $next_run ? human_time_diff(time(), $next_run) : 'Unknown';
+        
+        wp_send_json_success([
+            'message' => 'Auto-import schedule restored',
+            'next_run' => $next_run_display,
+        ]);
     }
     
     /**
@@ -24436,6 +24503,42 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
                                     <?php endif; ?>
                                 </div>
                             </div>
+                            
+                            <?php 
+                            // Cron Status
+                            $next_scheduled = wp_next_scheduled('flm_import_stories');
+                            $cron_healthy = ($next_scheduled !== false);
+                            $next_run_display = $next_scheduled ? human_time_diff(time(), $next_scheduled) : 'Not scheduled';
+                            $import_frequency = $settings['import_frequency'] ?? 'hourly';
+                            $frequency_labels = [
+                                'every_5_minutes' => '5 min',
+                                'every_15_minutes' => '15 min',
+                                'every_30_minutes' => '30 min',
+                                'hourly' => 'Hourly',
+                                'twicedaily' => '12 hrs',
+                                'daily' => 'Daily',
+                            ];
+                            ?>
+                            <div class="flm-stat-card" style="border-left:3px solid <?php echo $cron_healthy ? 'var(--flm-success)' : 'var(--flm-warning)'; ?>;">
+                                <div class="flm-stat-label">
+                                    <?php echo $this->icon('clock'); ?>
+                                    Auto-Import
+                                </div>
+                                <div class="flm-stat-value" style="font-size:16px;">
+                                    <?php if ($cron_healthy): ?>
+                                    <span style="color:var(--flm-success);">●</span> Active
+                                    <?php else: ?>
+                                    <span style="color:var(--flm-warning);">●</span> Inactive
+                                    <?php endif; ?>
+                                </div>
+                                <div class="flm-stat-meta">
+                                    <?php if ($cron_healthy): ?>
+                                    Next: <?php echo esc_html($next_run_display); ?> (<?php echo esc_html($frequency_labels[$import_frequency] ?? $import_frequency); ?>)
+                                    <?php else: ?>
+                                    <a href="#" id="flm-fix-cron" style="color:var(--flm-accent);text-decoration:none;">Fix Cron →</a>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
                 </div>
                 
                 <!-- Quick Actions -->
@@ -24518,6 +24621,31 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
                                     <?php echo $this->icon('trophy'); ?>
                                     <span>NCAAB</span>
                                     <small>UGA/GT</small>
+                                </button>
+                                <button type="button" class="flm-btn flm-btn-league flm-league-import" data-league="21" data-league-name="WNBA">
+                                    <?php echo $this->icon('basketball'); ?>
+                                    <span>WNBA</span>
+                                    <small>Dream</small>
+                                </button>
+                                <button type="button" class="flm-btn flm-btn-league flm-league-import" data-league="72" data-league-name="MLS">
+                                    <?php echo $this->icon('trophy'); ?>
+                                    <span>MLS</span>
+                                    <small>United</small>
+                                </button>
+                                <button type="button" class="flm-btn flm-btn-league flm-league-import" data-league="27" data-league-name="WNCAAB">
+                                    <?php echo $this->icon('trophy'); ?>
+                                    <span>WNCAAB</span>
+                                    <small>UGA/GT</small>
+                                </button>
+                                <button type="button" class="flm-btn flm-btn-league flm-league-import" data-league="123" data-league-name="Call of Duty">
+                                    <?php echo $this->icon('gamepad'); ?>
+                                    <span>COD</span>
+                                    <small>FaZe</small>
+                                </button>
+                                <button type="button" class="flm-btn flm-btn-league flm-league-import" data-league="124" data-league-name="Overwatch">
+                                    <?php echo $this->icon('gamepad'); ?>
+                                    <span>OW</span>
+                                    <small>Reign</small>
                                 </button>
                             </div>
                         </div>
