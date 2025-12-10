@@ -3,7 +3,7 @@
  * Plugin Name: FLM GameDay Atlanta
  * Plugin URI: https://github.com/mainlinemedia/flm-gameday-atlanta
  * Description: Import Braves, Hawks, Falcons, United, Dream, UGA & GT content from Field Level Media with AI enhancement, social posting, and analytics.
- * Version: 2.18.4
+ * Version: 2.18.5
  * Author: Austin / Mainline Media Group
  * Author URI: https://mainlinemediagroup.com
  * License: Proprietary
@@ -20,7 +20,7 @@ if (!defined('ABSPATH')) exit;
 class FLM_GameDay_Atlanta {
     
     private $api_base = 'https://api.fieldlevelmedia.com/v1';
-    private $version = '2.18.4';
+    private $version = '2.18.5';
     
     // GitHub Update Configuration
     private $github_username = 'mainlinemedia';
@@ -22919,12 +22919,12 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
             $obj->url = "https://github.com/{$this->github_username}/{$this->github_repo}";
             $obj->package = $remote_info['zipball_url'];
             $obj->icons = [
-                '1x' => 'https://ps.w.org/flm-gameday-atlanta/assets/icon-128x128.png',
-                '2x' => 'https://ps.w.org/flm-gameday-atlanta/assets/icon-256x256.png',
+                '1x' => "https://raw.githubusercontent.com/{$this->github_username}/{$this->github_repo}/{$this->github_branch}/assets/icon-128x128.png",
+                '2x' => "https://raw.githubusercontent.com/{$this->github_username}/{$this->github_repo}/{$this->github_branch}/assets/icon-256x256.png",
             ];
             $obj->banners = [
-                'low' => 'https://ps.w.org/flm-gameday-atlanta/assets/banner-772x250.png',
-                'high' => 'https://ps.w.org/flm-gameday-atlanta/assets/banner-1544x500.png',
+                'low' => "https://raw.githubusercontent.com/{$this->github_username}/{$this->github_repo}/{$this->github_branch}/assets/banner-772x250.png",
+                'high' => "https://raw.githubusercontent.com/{$this->github_username}/{$this->github_repo}/{$this->github_branch}/assets/banner-1544x500.png",
             ];
             $obj->tested = '6.9';
             $obj->requires_php = '7.4';
