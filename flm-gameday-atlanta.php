@@ -3,7 +3,7 @@
  * Plugin Name: FLM GameDay Atlanta
  * Plugin URI: https://github.com/mainlinemedia/flm-gameday-atlanta
  * Description: Import Braves, Hawks, Falcons, United, Dream, UGA & GT content from Field Level Media with AI enhancement, social posting, and analytics.
- * Version: 2.21.0
+ * Version: 2.21.1
  * Author: Austin / Mainline Media Group
  * Author URI: https://mainlinemediagroup.com
  * License: Proprietary
@@ -20,7 +20,7 @@ if (!defined('ABSPATH')) exit;
 class FLM_GameDay_Atlanta {
     
     private $api_base = 'https://api.fieldlevelmedia.com/v1';
-    private $version = '2.21.0';
+    private $version = '2.21.1';
     
     // GitHub Update Configuration
     private $github_username = 'mainlinemedia';
@@ -18732,54 +18732,126 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
     }
     
     // ========================================
-    // PHASE 1: SOCIAL INFRASTRUCTURE (v2.21.0)
+    // PHASE 1: SOCIAL INFRASTRUCTURE (v2.21.0) - Optimized v2.21.1
     // ========================================
     
+    /** @var string Database version */
+    private $db_version = '2.21.1';
+    
+    /** @var array Cached table existence checks */
+    private $table_exists_cache = [];
+    
+    /** @var array Queue status configuration */
+    private static $queue_statuses = [
+        'pending' => ['label' => 'Pending', 'color' => '#f59e0b'],
+        'pending_approval' => ['label' => 'Awaiting Approval', 'color' => '#8b5cf6'],
+        'scheduled' => ['label' => 'Scheduled', 'color' => '#3b82f6'],
+        'processing' => ['label' => 'Processing', 'color' => '#06b6d4'],
+        'completed' => ['label' => 'Posted', 'color' => '#10b981'],
+        'failed' => ['label' => 'Failed', 'color' => '#ef4444'],
+        'cancelled' => ['label' => 'Cancelled', 'color' => '#6b7280'],
+    ];
+    
     /**
-     * Database version for upgrade tracking
+     * Check if table exists with caching
      */
-    private $db_version = '2.21.0';
+    private function table_exists($table) {
+        if (!isset($this->table_exists_cache[$table])) {
+            global $wpdb;
+            $this->table_exists_cache[$table] = ($wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table)) === $table);
+        }
+        return $this->table_exists_cache[$table];
+    }
+    
+    /**
+     * Clear table existence cache (call after table creation)
+     */
+    private function clear_table_cache() {
+        $this->table_exists_cache = [];
+    }
+    
+    /**
+     * Verify AJAX request with admin capability - returns false on failure
+     */
+    private function verify_ajax_admin() {
+        if (!check_ajax_referer('flm_nonce', 'nonce', false)) {
+            wp_send_json_error(['message' => 'Security check failed']);
+            return false;
+        }
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Permission denied']);
+            return false;
+        }
+        return true;
+    }
+    
+    /**
+     * Get queue table name
+     */
+    private function get_queue_table() {
+        global $wpdb;
+        return $wpdb->prefix . 'flm_social_queue';
+    }
+    
+    /**
+     * Get engagement table name
+     */
+    private function get_engagement_table() {
+        global $wpdb;
+        return $wpdb->prefix . 'flm_engagement_metrics';
+    }
     
     /**
      * Maybe upgrade database on plugin load
      */
     public function maybe_upgrade_database() {
-        $installed_version = get_option('flm_db_version', '0');
-        
-        if (version_compare($installed_version, $this->db_version, '<')) {
+        $installed = get_option('flm_db_version', '0');
+        if (version_compare($installed, $this->db_version, '<')) {
             $this->create_database_tables();
             update_option('flm_db_version', $this->db_version);
+            $this->clear_table_cache();
         }
-        
-        // Schedule queue processing if enabled
+        $this->schedule_crons();
+    }
+    
+    /**
+     * Schedule/unschedule crons based on settings
+     */
+    private function schedule_crons() {
         $settings = $this->get_settings();
+        
+        // Queue processing
+        $queue_hook = 'flm_process_social_queue';
         if (!empty($settings['queue_enabled']) && !empty($settings['queue_auto_process'])) {
-            $interval = $settings['queue_process_interval'] ?? 'every5min';
-            if (!wp_next_scheduled('flm_process_social_queue')) {
-                wp_schedule_event(time(), $interval, 'flm_process_social_queue');
+            if (!wp_next_scheduled($queue_hook)) {
+                wp_schedule_event(time(), $settings['queue_process_interval'] ?? 'every5min', $queue_hook);
             }
+        } else {
+            wp_clear_scheduled_hook($queue_hook);
         }
         
-        // Schedule engagement sync if enabled
+        // Engagement sync
+        $engage_hook = 'flm_sync_engagement_metrics';
         if (!empty($settings['engagement_tracking_enabled'])) {
-            $interval = $settings['engagement_sync_interval'] ?? 'hourly';
-            if (!wp_next_scheduled('flm_sync_engagement_metrics')) {
-                wp_schedule_event(time(), $interval, 'flm_sync_engagement_metrics');
+            if (!wp_next_scheduled($engage_hook)) {
+                wp_schedule_event(time(), $settings['engagement_sync_interval'] ?? 'hourly', $engage_hook);
             }
+        } else {
+            wp_clear_scheduled_hook($engage_hook);
         }
     }
     
     /**
-     * Create database tables for queue and engagement tracking
+     * Create database tables
      */
     private function create_database_tables() {
         global $wpdb;
+        $charset = $wpdb->get_charset_collate();
         
-        $charset_collate = $wpdb->get_charset_collate();
+        $queue_table = $this->get_queue_table();
+        $engage_table = $this->get_engagement_table();
         
-        // Social Queue Table
-        $table_queue = $wpdb->prefix . 'flm_social_queue';
-        $sql_queue = "CREATE TABLE $table_queue (
+        $sql_queue = "CREATE TABLE $queue_table (
             id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
             post_id bigint(20) unsigned NOT NULL,
             platform varchar(20) NOT NULL DEFAULT 'twitter',
@@ -18791,20 +18863,16 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
             scheduled_at datetime DEFAULT NULL,
             processed_at datetime DEFAULT NULL,
             external_id varchar(100),
-            retry_count int(11) NOT NULL DEFAULT 0,
+            retry_count tinyint(3) unsigned NOT NULL DEFAULT 0,
             last_error text,
             created_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             PRIMARY KEY (id),
-            KEY post_id (post_id),
-            KEY platform (platform),
-            KEY status (status),
-            KEY scheduled_at (scheduled_at)
-        ) $charset_collate;";
+            KEY idx_status_scheduled (status, scheduled_at),
+            KEY idx_post_platform (post_id, platform)
+        ) $charset;";
         
-        // Engagement Metrics Table
-        $table_engagement = $wpdb->prefix . 'flm_engagement_metrics';
-        $sql_engagement = "CREATE TABLE $table_engagement (
+        $sql_engage = "CREATE TABLE $engage_table (
             id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
             post_id bigint(20) unsigned NOT NULL,
             platform varchar(20) NOT NULL,
@@ -18817,28 +18885,26 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
             engagement_rate decimal(5,2) DEFAULT 0.00,
             recorded_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (id),
-            KEY post_id (post_id),
-            KEY platform (platform),
-            KEY external_id (external_id),
-            KEY recorded_at (recorded_at)
-        ) $charset_collate;";
+            KEY idx_post_platform (post_id, platform),
+            KEY idx_recorded (recorded_at)
+        ) $charset;";
         
         require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
         dbDelta($sql_queue);
-        dbDelta($sql_engagement);
+        dbDelta($sql_engage);
         
-        // Migrate old queue data from wp_option
+        // Migrate legacy data
         $old_queue = get_option('flm_social_queue', []);
         if (!empty($old_queue)) {
             foreach ($old_queue as $post_id => $data) {
-                $wpdb->insert($table_queue, [
-                    'post_id' => $post_id,
+                $wpdb->insert($queue_table, [
+                    'post_id' => absint($post_id),
                     'platform' => 'twitter',
                     'status' => 'pending',
-                    'headline' => $data['headline'] ?? '',
-                    'team_key' => $data['team_key'] ?? '',
+                    'headline' => sanitize_text_field($data['headline'] ?? ''),
+                    'team_key' => sanitize_key($data['team_key'] ?? ''),
                     'created_at' => $data['queued_at'] ?? current_time('mysql'),
-                ]);
+                ], ['%d', '%s', '%s', '%s', '%s', '%s']);
             }
             delete_option('flm_social_queue');
         }
@@ -18849,48 +18915,44 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
      */
     public function add_to_queue($post_id, $platform, $headline, $content = '', $image_url = '', $team_key = '', $scheduled_at = null) {
         global $wpdb;
-        $table = $wpdb->prefix . 'flm_social_queue';
+        $table = $this->get_queue_table();
+        
+        if (!$this->table_exists($table)) return false;
         
         $settings = $this->get_settings();
         $status = !empty($settings['queue_require_approval']) ? 'pending_approval' : 'pending';
         
-        // Auto-schedule for optimal time if enabled
         if (empty($scheduled_at) && !empty($settings['queue_optimal_times'])) {
             $scheduled_at = $this->get_next_optimal_time($platform);
         }
         
         $result = $wpdb->insert($table, [
-            'post_id' => $post_id,
-            'platform' => $platform,
+            'post_id' => absint($post_id),
+            'platform' => sanitize_key($platform),
             'status' => $status,
-            'headline' => $headline,
-            'content' => $content,
-            'image_url' => $image_url,
-            'team_key' => $team_key,
+            'headline' => wp_strip_all_tags($headline),
+            'content' => wp_strip_all_tags($content),
+            'image_url' => esc_url_raw($image_url),
+            'team_key' => sanitize_key($team_key),
             'scheduled_at' => $scheduled_at,
             'created_at' => current_time('mysql'),
         ], ['%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s']);
         
         if ($result) {
-            $this->log_activity('queue', "Added to {$platform} queue: " . substr($headline, 0, 50) . '...', [
-                'post_id' => $post_id,
-                'team' => $team_key,
-            ]);
+            $this->log_activity('queue', "Queued for {$platform}: " . mb_substr($headline, 0, 40) . '...');
             return $wpdb->insert_id;
         }
-        
         return false;
     }
     
     /**
-     * Get queue items with optional filtering
+     * Get queue items with caching for stats
      */
     public function get_queue_items($status = null, $platform = null, $limit = 100) {
         global $wpdb;
-        $table = $wpdb->prefix . 'flm_social_queue';
+        $table = $this->get_queue_table();
         
-        // Check if table exists, fallback to old system
-        if ($wpdb->get_var("SHOW TABLES LIKE '$table'") !== $table) {
+        if (!$this->table_exists($table)) {
             return $this->get_legacy_queue_items();
         }
         
@@ -18899,235 +18961,165 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
         
         if ($status) {
             $where[] = 'q.status = %s';
-            $args[] = $status;
+            $args[] = sanitize_key($status);
         }
-        
         if ($platform) {
             $where[] = 'q.platform = %s';
-            $args[] = $platform;
+            $args[] = sanitize_key($platform);
         }
-        
-        $where_sql = implode(' AND ', $where);
         
         $sql = "SELECT q.*, p.post_title, p.post_status as wp_status
                 FROM $table q
                 LEFT JOIN {$wpdb->posts} p ON q.post_id = p.ID
-                WHERE $where_sql
-                ORDER BY q.scheduled_at ASC, q.created_at ASC
+                WHERE " . implode(' AND ', $where) . "
+                ORDER BY COALESCE(q.scheduled_at, q.created_at) ASC
                 LIMIT %d";
-        
-        $args[] = $limit;
+        $args[] = min(500, max(1, $limit));
         
         $items = $wpdb->get_results($wpdb->prepare($sql, ...$args), ARRAY_A);
         
-        // Enrich with additional data
         foreach ($items as &$item) {
+            $status_cfg = self::$queue_statuses[$item['status']] ?? ['label' => ucfirst($item['status']), 'color' => '#6b7280'];
             $item['edit_url'] = get_edit_post_link($item['post_id'], 'raw');
             $item['view_url'] = get_permalink($item['post_id']);
-            $item['status_label'] = $this->get_queue_status_label($item['status']);
-            $item['status_color'] = $this->get_queue_status_color($item['status']);
-            $item['platform_icon'] = $item['platform'] === 'twitter' ? '𝕏' : ($item['platform'] === 'facebook' ? 'f' : '📷');
+            $item['status_label'] = $status_cfg['label'];
+            $item['status_color'] = $status_cfg['color'];
+            $item['platform_icon'] = ['twitter' => '𝕏', 'facebook' => 'f', 'instagram' => '📷'][$item['platform']] ?? '📤';
         }
         
         return $items;
     }
     
     /**
-     * Legacy queue getter for backwards compatibility
+     * Legacy queue getter
      */
     private function get_legacy_queue_items() {
         $queue = get_option('flm_social_queue', []);
-        $enriched = [];
-        
+        $items = [];
         foreach ($queue as $post_id => $data) {
-            $post = get_post($post_id);
-            if ($post) {
-                $enriched[] = [
-                    'id' => $post_id,
-                    'post_id' => $post_id,
-                    'post_title' => $post->post_title,
-                    'wp_status' => $post->post_status,
-                    'platform' => 'twitter',
-                    'status' => 'pending',
-                    'headline' => $data['headline'] ?? $post->post_title,
-                    'team_key' => $data['team_key'] ?? '',
-                    'created_at' => $data['queued_at'] ?? '',
-                    'edit_url' => get_edit_post_link($post_id, 'raw'),
-                    'status_label' => 'Pending',
-                    'status_color' => '#f59e0b',
+            if ($post = get_post($post_id)) {
+                $items[] = [
+                    'id' => $post_id, 'post_id' => $post_id, 'post_title' => $post->post_title,
+                    'wp_status' => $post->post_status, 'platform' => 'twitter', 'status' => 'pending',
+                    'headline' => $data['headline'] ?? $post->post_title, 'team_key' => $data['team_key'] ?? '',
+                    'created_at' => $data['queued_at'] ?? '', 'edit_url' => get_edit_post_link($post_id, 'raw'),
+                    'status_label' => 'Pending', 'status_color' => '#f59e0b',
                 ];
             }
         }
+        return $items;
+    }
+    
+    /**
+     * Get cached queue stats
+     */
+    private function get_queue_stats() {
+        $cached = get_transient('flm_queue_stats');
+        if ($cached !== false) return $cached;
         
-        return $enriched;
+        global $wpdb;
+        $table = $this->get_queue_table();
+        
+        $stats = ['pending' => 0, 'pending_approval' => 0, 'scheduled' => 0, 'completed' => 0, 'failed' => 0, 'total' => 0];
+        
+        if ($this->table_exists($table)) {
+            $rows = $wpdb->get_results("SELECT status, COUNT(*) as c FROM $table GROUP BY status", ARRAY_A);
+            foreach ($rows as $r) {
+                $stats[$r['status']] = (int)$r['c'];
+                $stats['total'] += (int)$r['c'];
+            }
+        }
+        
+        set_transient('flm_queue_stats', $stats, 60);
+        return $stats;
     }
     
     /**
-     * Get human-readable queue status label
+     * Invalidate queue stats cache
      */
-    private function get_queue_status_label($status) {
-        $labels = [
-            'pending' => 'Pending',
-            'pending_approval' => 'Awaiting Approval',
-            'scheduled' => 'Scheduled',
-            'processing' => 'Processing',
-            'completed' => 'Posted',
-            'failed' => 'Failed',
-            'cancelled' => 'Cancelled',
-        ];
-        return $labels[$status] ?? ucfirst($status);
+    private function invalidate_queue_stats() {
+        delete_transient('flm_queue_stats');
     }
     
     /**
-     * Get queue status color
-     */
-    private function get_queue_status_color($status) {
-        $colors = [
-            'pending' => '#f59e0b',
-            'pending_approval' => '#8b5cf6',
-            'scheduled' => '#3b82f6',
-            'processing' => '#06b6d4',
-            'completed' => '#10b981',
-            'failed' => '#ef4444',
-            'cancelled' => '#6b7280',
-        ];
-        return $colors[$status] ?? '#6b7280';
-    }
-    
-    /**
-     * Get next optimal posting time based on settings
+     * Get next optimal posting time
      */
     private function get_next_optimal_time($platform) {
         $settings = $this->get_settings();
-        $times_key = "best_times_{$platform}";
-        $best_times = $settings[$times_key] ?? ['09:00', '12:00', '17:00'];
-        
-        if (empty($best_times) || !is_array($best_times)) {
-            return null;
-        }
+        $times = $settings["best_times_{$platform}"] ?? ['09:00', '12:00', '17:00'];
+        if (empty($times) || !is_array($times)) return null;
         
         $now = current_time('timestamp');
         $today = date('Y-m-d', $now);
-        $tomorrow = date('Y-m-d', strtotime('+1 day', $now));
         
-        // Find next available time slot
-        foreach ($best_times as $time) {
-            $datetime = strtotime("$today $time");
-            if ($datetime > $now + 300) { // At least 5 min in future
-                return date('Y-m-d H:i:s', $datetime);
-            }
+        foreach ($times as $t) {
+            $dt = strtotime("$today $t");
+            if ($dt > $now + 300) return date('Y-m-d H:i:s', $dt);
         }
         
-        // All today's slots passed, use first tomorrow slot
-        $first_time = $best_times[0];
-        return date('Y-m-d H:i:s', strtotime("$tomorrow $first_time"));
+        return date('Y-m-d H:i:s', strtotime(date('Y-m-d', strtotime('+1 day', $now)) . ' ' . $times[0]));
     }
     
     /**
-     * Process social queue (cron callback)
+     * Process social queue (cron)
      */
     public function process_social_queue() {
         $settings = $this->get_settings();
-        
-        if (empty($settings['queue_enabled']) || empty($settings['queue_auto_process'])) {
-            return;
-        }
+        if (empty($settings['queue_enabled']) || empty($settings['queue_auto_process'])) return;
         
         global $wpdb;
-        $table = $wpdb->prefix . 'flm_social_queue';
+        $table = $this->get_queue_table();
+        if (!$this->table_exists($table)) return;
         
-        // Check if table exists
-        if ($wpdb->get_var("SHOW TABLES LIKE '$table'") !== $table) {
-            return;
-        }
+        $batch = min(20, max(1, $settings['queue_batch_size'] ?? 5));
+        $max_retry = min(10, max(1, $settings['queue_max_retries'] ?? 3));
         
-        $batch_size = $settings['queue_batch_size'] ?? 5;
-        $max_retries = $settings['queue_max_retries'] ?? 3;
-        
-        // Get items ready to process
         $items = $wpdb->get_results($wpdb->prepare(
             "SELECT * FROM $table 
-             WHERE status IN ('pending', 'scheduled') 
+             WHERE status IN ('pending','scheduled') 
              AND (scheduled_at IS NULL OR scheduled_at <= %s)
              AND retry_count < %d
-             ORDER BY scheduled_at ASC, created_at ASC 
+             ORDER BY COALESCE(scheduled_at, created_at) ASC 
              LIMIT %d",
-            current_time('mysql'),
-            $max_retries,
-            $batch_size
+            current_time('mysql'), $max_retry, $batch
         ), ARRAY_A);
         
-        if (empty($items)) {
-            return;
-        }
+        if (empty($items)) return;
         
+        $processed = 0;
         foreach ($items as $item) {
-            $this->process_queue_item($item);
+            if ($this->process_queue_item($item)) $processed++;
         }
         
-        $this->log_activity('queue', "Processed " . count($items) . " queue items");
+        $this->invalidate_queue_stats();
+        if ($processed) $this->log_activity('queue', "Processed $processed queue items");
     }
     
     /**
-     * Process a single queue item
+     * Process single queue item
      */
     private function process_queue_item($item) {
         global $wpdb;
-        $table = $wpdb->prefix . 'flm_social_queue';
+        $table = $this->get_queue_table();
+        $id = (int)$item['id'];
         
-        // Mark as processing
-        $wpdb->update($table, ['status' => 'processing'], ['id' => $item['id']]);
+        $wpdb->update($table, ['status' => 'processing'], ['id' => $id], ['%s'], ['%d']);
         
         $post = get_post($item['post_id']);
         if (!$post || $post->post_status !== 'publish') {
-            $wpdb->update($table, [
-                'status' => 'cancelled',
-                'last_error' => 'Post not published or deleted',
-            ], ['id' => $item['id']]);
-            return;
+            $wpdb->update($table, ['status' => 'cancelled', 'last_error' => 'Post unavailable'], ['id' => $id]);
+            return false;
         }
         
-        $post_url = get_permalink($item['post_id']);
-        $image_url = $item['image_url'];
+        $url = get_permalink($item['post_id']);
+        $img = $item['image_url'] ?: (($tid = get_post_thumbnail_id($item['post_id'])) ? wp_get_attachment_url($tid) : '');
         
-        // Get featured image if not specified
-        if (empty($image_url)) {
-            $thumb_id = get_post_thumbnail_id($item['post_id']);
-            if ($thumb_id) {
-                $image_url = wp_get_attachment_url($thumb_id);
-            }
-        }
-        
-        $result = ['success' => false, 'error' => 'Unknown platform'];
-        
-        switch ($item['platform']) {
-            case 'twitter':
-                $result = $this->post_to_twitter_v2_with_media(
-                    $item['post_id'],
-                    $item['headline'],
-                    $post_url,
-                    $item['team_key'],
-                    $image_url
-                );
-                break;
-                
-            case 'facebook':
-                $result = $this->post_to_facebook(
-                    $item['post_id'],
-                    $item['headline'],
-                    $post_url,
-                    $item['team_key']
-                );
-                break;
-                
-            case 'instagram':
-                $result = $this->post_to_instagram(
-                    $item['post_id'],
-                    $item['headline'],
-                    $image_url
-                );
-                break;
-        }
+        $result = match($item['platform']) {
+            'twitter' => $this->post_to_twitter_v2_with_media($item['post_id'], $item['headline'], $url, $item['team_key'], $img),
+            'facebook' => $this->post_to_facebook($item['post_id'], $item['headline'], $url, $item['team_key']),
+            'instagram' => $this->post_to_instagram($item['post_id'], $item['headline'], $img),
+            default => ['success' => false, 'error' => 'Unknown platform'],
+        };
         
         if ($result['success']) {
             $wpdb->update($table, [
@@ -19135,776 +19127,321 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
                 'processed_at' => current_time('mysql'),
                 'external_id' => $result['tweet_id'] ?? $result['post_id'] ?? '',
                 'last_error' => null,
-            ], ['id' => $item['id']]);
+            ], ['id' => $id]);
             
-            // Store external ID in post meta for engagement tracking
             update_post_meta($item['post_id'], "_flm_{$item['platform']}_id", $result['tweet_id'] ?? $result['post_id'] ?? '');
             update_post_meta($item['post_id'], "_flm_{$item['platform']}_posted_at", current_time('mysql'));
-            
             $this->log_social_activity($item['platform'], $item['post_id'], $result);
-        } else {
-            $settings = $this->get_settings();
-            $retry_delay = $settings['queue_retry_delay'] ?? 300;
-            
-            $new_status = ($item['retry_count'] + 1 >= ($settings['queue_max_retries'] ?? 3)) ? 'failed' : 'pending';
-            $scheduled_at = ($new_status === 'pending') ? date('Y-m-d H:i:s', time() + $retry_delay) : null;
-            
-            $wpdb->update($table, [
-                'status' => $new_status,
-                'retry_count' => $item['retry_count'] + 1,
-                'last_error' => $result['error'] ?? 'Unknown error',
-                'scheduled_at' => $scheduled_at,
-            ], ['id' => $item['id']]);
-            
-            $this->log_social_activity($item['platform'], $item['post_id'], $result);
-        }
-    }
-    
-    /**
-     * Post to Twitter with media upload support
-     */
-    private function post_to_twitter_v2_with_media($post_id, $text, $url, $team_key, $image_url = '') {
-        $access_token = $this->get_twitter_access_token();
-        
-        if (!$access_token) {
-            return ['success' => false, 'error' => 'Twitter not connected or token expired'];
+            return true;
         }
         
         $settings = $this->get_settings();
+        $new_retry = $item['retry_count'] + 1;
+        $new_status = ($new_retry >= ($settings['queue_max_retries'] ?? 3)) ? 'failed' : 'pending';
+        $next_try = ($new_status === 'pending') ? date('Y-m-d H:i:s', time() + ($settings['queue_retry_delay'] ?? 300)) : null;
         
-        // Build tweet text from template
-        $template = $settings['twitter_post_template'] ?? '📰 {headline} #Atlanta #Sports {team_hashtag}';
-        $team_config = $this->target_teams[$team_key] ?? [];
-        $tracked_url = $this->build_utm_url($url, 'twitter', $team_key);
+        $wpdb->update($table, [
+            'status' => $new_status,
+            'retry_count' => $new_retry,
+            'last_error' => mb_substr($result['error'] ?? 'Unknown', 0, 500),
+            'scheduled_at' => $next_try,
+        ], ['id' => $id]);
         
-        $team_hashtags = [
-            'braves' => '#Braves #ForTheA',
-            'falcons' => '#Falcons #RiseUp',
-            'hawks' => '#Hawks #TrueToAtlanta',
-            'united' => '#ATLUTD #UniteAndConquer',
-            'dream' => '#AtlantaDream #DreamOn',
-            'uga' => '#UGA #GoDawgs',
-            'gt' => '#GaTech #TogetherWeSwarm',
-            'faze' => '#FaZeUp #AtlantaFaZe',
-            'reign' => '#ATLReign #OverwatchLeague',
+        $this->log_social_activity($item['platform'], $item['post_id'], $result);
+        return false;
+    }
+    
+    /**
+     * Post to Twitter with media support
+     */
+    private function post_to_twitter_v2_with_media($post_id, $text, $url, $team_key, $image_url = '') {
+        $token = $this->get_twitter_access_token();
+        if (!$token) return ['success' => false, 'error' => 'Twitter not connected'];
+        
+        $settings = $this->get_settings();
+        $tpl = $settings['twitter_post_template'] ?? '📰 {headline} #Atlanta #Sports {team_hashtag}';
+        $team = $this->target_teams[$team_key] ?? [];
+        $tracked = $this->build_utm_url($url, 'twitter', $team_key);
+        
+        $hashtags = [
+            'braves' => '#Braves #ForTheA', 'falcons' => '#Falcons #RiseUp', 'hawks' => '#Hawks #TrueToAtlanta',
+            'united' => '#ATLUTD #UniteAndConquer', 'dream' => '#AtlantaDream', 'uga' => '#UGA #GoDawgs',
+            'gt' => '#GaTech #TogetherWeSwarm', 'faze' => '#FaZeUp', 'reign' => '#ATLReign',
         ];
         
-        $tweet_text = str_replace([
-            '{headline}',
-            '{url}',
-            '{team}',
-            '{team_hashtag}',
-            '{league}',
-        ], [
-            $text,
-            $tracked_url,
-            $team_config['name'] ?? '',
-            $team_hashtags[$team_key] ?? '#Atlanta',
-            $team_config['league'] ?? '',
-        ], $template);
+        $tweet = str_replace(
+            ['{headline}', '{url}', '{team}', '{team_hashtag}', '{league}'],
+            [$text, $tracked, $team['name'] ?? '', $hashtags[$team_key] ?? '#Atlanta', $team['league'] ?? ''],
+            $tpl
+        );
         
-        // Append URL if not in template
-        if (strpos($tweet_text, 'http') === false) {
-            if (strlen($tweet_text) > 254) {
-                $tweet_text = substr($tweet_text, 0, 251) . '...';
-            }
-            $tweet_text .= "\n\n" . $tracked_url;
+        if (strpos($tweet, 'http') === false) {
+            $tweet = mb_substr($tweet, 0, 254) . (mb_strlen($tweet) > 254 ? '...' : '') . "\n\n" . $tracked;
         }
+        $tweet = mb_substr($tweet, 0, 280);
         
-        // Truncate to 280 chars
-        if (strlen($tweet_text) > 280) {
-            $tweet_text = substr($tweet_text, 0, 277) . '...';
-        }
-        
-        // Upload media if enabled and available
-        $media_ids = [];
-        if (!empty($image_url) && !empty($settings['twitter_upload_images'])) {
-            $media_result = $this->upload_twitter_media($image_url, $access_token);
-            if ($media_result['success'] && !empty($media_result['media_id'])) {
-                $media_ids[] = $media_result['media_id'];
-            }
-        }
-        
-        // Build tweet payload
-        $payload = ['text' => $tweet_text];
-        if (!empty($media_ids)) {
-            $payload['media'] = ['media_ids' => $media_ids];
-        }
-        
-        // Post tweet
-        $response = wp_remote_post('https://api.twitter.com/2/tweets', [
-            'headers' => [
-                'Authorization' => 'Bearer ' . $access_token,
-                'Content-Type' => 'application/json',
-            ],
-            'body' => json_encode($payload),
+        $resp = wp_remote_post('https://api.twitter.com/2/tweets', [
+            'headers' => ['Authorization' => "Bearer $token", 'Content-Type' => 'application/json'],
+            'body' => json_encode(['text' => $tweet]),
             'timeout' => 30,
         ]);
         
-        if (is_wp_error($response)) {
-            return ['success' => false, 'error' => $response->get_error_message()];
-        }
+        if (is_wp_error($resp)) return ['success' => false, 'error' => $resp->get_error_message()];
         
-        $code = wp_remote_retrieve_response_code($response);
-        $body = json_decode(wp_remote_retrieve_body($response), true);
+        $code = wp_remote_retrieve_response_code($resp);
+        $body = json_decode(wp_remote_retrieve_body($resp), true);
         
         if ($code === 201 && isset($body['data']['id'])) {
-            $this->log_activity('social', "Posted to Twitter: " . substr($tweet_text, 0, 50) . '...');
-            return [
-                'success' => true,
-                'tweet_id' => $body['data']['id'],
-                'tweet_text' => $tweet_text,
-            ];
+            return ['success' => true, 'tweet_id' => $body['data']['id'], 'tweet_text' => $tweet];
         }
         
-        $error = $body['detail'] ?? $body['errors'][0]['message'] ?? "Twitter API error (HTTP $code)";
-        return ['success' => false, 'error' => $error, 'code' => $code];
+        return ['success' => false, 'error' => $body['detail'] ?? $body['errors'][0]['message'] ?? "HTTP $code", 'code' => $code];
     }
     
     /**
-     * Upload media to Twitter
+     * Upload media to Twitter (OAuth 1.0a required - placeholder)
      */
-    private function upload_twitter_media($image_url, $access_token) {
-        // Download image
-        $response = wp_remote_get($image_url, ['timeout' => 30]);
-        
-        if (is_wp_error($response)) {
-            return ['success' => false, 'error' => 'Failed to download image: ' . $response->get_error_message()];
-        }
-        
-        $image_data = wp_remote_retrieve_body($response);
-        $content_type = wp_remote_retrieve_header($response, 'content-type');
-        
-        if (empty($image_data)) {
-            return ['success' => false, 'error' => 'Empty image data'];
-        }
-        
-        $settings = $this->get_settings();
-        $max_size = $settings['twitter_max_image_size'] ?? 5242880;
-        
-        if (strlen($image_data) > $max_size) {
-            return ['success' => false, 'error' => 'Image too large (max 5MB)'];
-        }
-        
-        // Twitter media upload requires OAuth 1.0a, which we're using for media
-        // For OAuth 2.0, we need to use the v1.1 endpoint with app auth
-        // Note: Twitter API v2 doesn't fully support media upload yet with OAuth 2.0
-        // This is a limitation - for full media support, we'd need OAuth 1.0a
-        
-        // For now, return success without media_id since OAuth 2.0 media upload is limited
-        return ['success' => false, 'error' => 'Media upload requires OAuth 1.0a (coming in v2.22.0)'];
+    private function upload_twitter_media($image_url, $token) {
+        return ['success' => false, 'error' => 'Media upload requires OAuth 1.0a'];
     }
     
-    /**
-     * AJAX: Get all queue items
-     */
+    // --- AJAX Handlers (Consolidated) ---
+    
     public function ajax_queue_get_all() {
-        check_ajax_referer('flm_nonce', 'nonce');
+        if (!$this->verify_ajax_admin()) return;
         
-        if (!current_user_can('manage_options')) {
-            wp_send_json_error(['message' => 'Permission denied']);
-        }
-        
-        $status = isset($_POST['status']) ? sanitize_text_field($_POST['status']) : null;
-        $platform = isset($_POST['platform']) ? sanitize_text_field($_POST['platform']) : null;
-        
-        $items = $this->get_queue_items($status, $platform);
-        
-        // Get queue stats
-        global $wpdb;
-        $table = $wpdb->prefix . 'flm_social_queue';
-        
-        $stats = [
-            'pending' => 0,
-            'scheduled' => 0,
-            'completed' => 0,
-            'failed' => 0,
-            'total' => 0,
-        ];
-        
-        if ($wpdb->get_var("SHOW TABLES LIKE '$table'") === $table) {
-            $counts = $wpdb->get_results("SELECT status, COUNT(*) as count FROM $table GROUP BY status", ARRAY_A);
-            foreach ($counts as $row) {
-                $stats[$row['status']] = intval($row['count']);
-                $stats['total'] += intval($row['count']);
-            }
-        }
+        $status = isset($_POST['status']) ? sanitize_key($_POST['status']) : null;
+        $platform = isset($_POST['platform']) ? sanitize_key($_POST['platform']) : null;
         
         wp_send_json_success([
-            'queue' => $items,
-            'stats' => $stats,
+            'queue' => $this->get_queue_items($status, $platform),
+            'stats' => $this->get_queue_stats(),
         ]);
     }
     
-    /**
-     * AJAX: Retry failed queue item
-     */
     public function ajax_queue_retry() {
-        check_ajax_referer('flm_nonce', 'nonce');
-        
-        if (!current_user_can('manage_options')) {
-            wp_send_json_error(['message' => 'Permission denied']);
-        }
-        
-        $queue_id = isset($_POST['queue_id']) ? intval($_POST['queue_id']) : 0;
-        
-        if (!$queue_id) {
-            wp_send_json_error(['message' => 'Invalid queue ID']);
-        }
+        if (!$this->verify_ajax_admin()) return;
+        $id = absint($_POST['queue_id'] ?? 0);
+        if (!$id) { wp_send_json_error(['message' => 'Invalid ID']); return; }
         
         global $wpdb;
-        $table = $wpdb->prefix . 'flm_social_queue';
+        $wpdb->update($this->get_queue_table(), [
+            'status' => 'pending', 'retry_count' => 0, 'scheduled_at' => current_time('mysql'), 'last_error' => null
+        ], ['id' => $id]);
         
-        $result = $wpdb->update($table, [
-            'status' => 'pending',
-            'retry_count' => 0,
-            'scheduled_at' => current_time('mysql'),
-            'last_error' => null,
-        ], ['id' => $queue_id]);
-        
-        if ($result !== false) {
-            $this->log_activity('queue', "Retrying queue item #$queue_id");
-            wp_send_json_success(['message' => 'Item queued for retry']);
-        } else {
-            wp_send_json_error(['message' => 'Failed to update queue item']);
-        }
+        $this->invalidate_queue_stats();
+        wp_send_json_success(['message' => 'Queued for retry']);
     }
     
-    /**
-     * AJAX: Cancel queue item
-     */
     public function ajax_queue_cancel() {
-        check_ajax_referer('flm_nonce', 'nonce');
-        
-        if (!current_user_can('manage_options')) {
-            wp_send_json_error(['message' => 'Permission denied']);
-        }
-        
-        $queue_id = isset($_POST['queue_id']) ? intval($_POST['queue_id']) : 0;
-        
-        if (!$queue_id) {
-            wp_send_json_error(['message' => 'Invalid queue ID']);
-        }
+        if (!$this->verify_ajax_admin()) return;
+        $id = absint($_POST['queue_id'] ?? 0);
+        if (!$id) { wp_send_json_error(['message' => 'Invalid ID']); return; }
         
         global $wpdb;
-        $table = $wpdb->prefix . 'flm_social_queue';
-        
-        $result = $wpdb->update($table, [
-            'status' => 'cancelled',
-        ], ['id' => $queue_id]);
-        
-        if ($result !== false) {
-            $this->log_activity('queue', "Cancelled queue item #$queue_id");
-            wp_send_json_success(['message' => 'Item cancelled']);
-        } else {
-            wp_send_json_error(['message' => 'Failed to cancel item']);
-        }
+        $wpdb->update($this->get_queue_table(), ['status' => 'cancelled'], ['id' => $id]);
+        $this->invalidate_queue_stats();
+        wp_send_json_success(['message' => 'Cancelled']);
     }
     
-    /**
-     * AJAX: Approve pending queue item
-     */
     public function ajax_queue_approve() {
-        check_ajax_referer('flm_nonce', 'nonce');
-        
-        if (!current_user_can('manage_options')) {
-            wp_send_json_error(['message' => 'Permission denied']);
-        }
-        
-        $queue_id = isset($_POST['queue_id']) ? intval($_POST['queue_id']) : 0;
-        
-        if (!$queue_id) {
-            wp_send_json_error(['message' => 'Invalid queue ID']);
-        }
+        if (!$this->verify_ajax_admin()) return;
+        $id = absint($_POST['queue_id'] ?? 0);
+        if (!$id) { wp_send_json_error(['message' => 'Invalid ID']); return; }
         
         global $wpdb;
-        $table = $wpdb->prefix . 'flm_social_queue';
-        
-        $result = $wpdb->update($table, [
-            'status' => 'pending',
-        ], ['id' => $queue_id, 'status' => 'pending_approval']);
-        
-        if ($result !== false) {
-            $this->log_activity('queue', "Approved queue item #$queue_id");
-            wp_send_json_success(['message' => 'Item approved for posting']);
-        } else {
-            wp_send_json_error(['message' => 'Failed to approve item']);
-        }
+        $wpdb->update($this->get_queue_table(), ['status' => 'pending'], ['id' => $id, 'status' => 'pending_approval']);
+        $this->invalidate_queue_stats();
+        wp_send_json_success(['message' => 'Approved']);
     }
     
-    /**
-     * AJAX: Reschedule queue item
-     */
     public function ajax_queue_reschedule() {
-        check_ajax_referer('flm_nonce', 'nonce');
-        
-        if (!current_user_can('manage_options')) {
-            wp_send_json_error(['message' => 'Permission denied']);
-        }
-        
-        $queue_id = isset($_POST['queue_id']) ? intval($_POST['queue_id']) : 0;
-        $scheduled_at = isset($_POST['scheduled_at']) ? sanitize_text_field($_POST['scheduled_at']) : '';
-        
-        if (!$queue_id || empty($scheduled_at)) {
-            wp_send_json_error(['message' => 'Invalid parameters']);
-        }
+        if (!$this->verify_ajax_admin()) return;
+        $id = absint($_POST['queue_id'] ?? 0);
+        $scheduled = sanitize_text_field($_POST['scheduled_at'] ?? '');
+        if (!$id || empty($scheduled)) { wp_send_json_error(['message' => 'Invalid params']); return; }
         
         global $wpdb;
-        $table = $wpdb->prefix . 'flm_social_queue';
-        
-        $result = $wpdb->update($table, [
-            'status' => 'scheduled',
-            'scheduled_at' => $scheduled_at,
-        ], ['id' => $queue_id]);
-        
-        if ($result !== false) {
-            $this->log_activity('queue', "Rescheduled queue item #$queue_id to $scheduled_at");
-            wp_send_json_success(['message' => 'Item rescheduled']);
-        } else {
-            wp_send_json_error(['message' => 'Failed to reschedule item']);
-        }
+        $wpdb->update($this->get_queue_table(), ['status' => 'scheduled', 'scheduled_at' => $scheduled], ['id' => $id]);
+        $this->invalidate_queue_stats();
+        wp_send_json_success(['message' => 'Rescheduled']);
     }
     
-    /**
-     * AJAX: Clear completed queue items
-     */
     public function ajax_queue_clear_completed() {
-        check_ajax_referer('flm_nonce', 'nonce');
-        
-        if (!current_user_can('manage_options')) {
-            wp_send_json_error(['message' => 'Permission denied']);
-        }
+        if (!$this->verify_ajax_admin()) return;
         
         global $wpdb;
-        $table = $wpdb->prefix . 'flm_social_queue';
-        
-        $deleted = $wpdb->delete($table, ['status' => 'completed']);
-        $wpdb->delete($table, ['status' => 'cancelled']);
-        
-        $this->log_activity('queue', "Cleared completed/cancelled queue items");
-        
-        wp_send_json_success(['message' => "Cleared completed items", 'deleted' => $deleted]);
+        $table = $this->get_queue_table();
+        $del = $wpdb->query("DELETE FROM $table WHERE status IN ('completed','cancelled')");
+        $this->invalidate_queue_stats();
+        wp_send_json_success(['message' => 'Cleared', 'deleted' => $del]);
     }
     
-    /**
-     * AJAX: Bulk queue action
-     */
     public function ajax_queue_bulk_action() {
-        check_ajax_referer('flm_nonce', 'nonce');
+        if (!$this->verify_ajax_admin()) return;
         
-        if (!current_user_can('manage_options')) {
-            wp_send_json_error(['message' => 'Permission denied']);
-        }
-        
-        $action = isset($_POST['bulk_action']) ? sanitize_text_field($_POST['bulk_action']) : '';
-        $ids = isset($_POST['ids']) ? array_map('intval', (array)$_POST['ids']) : [];
-        
-        if (empty($action) || empty($ids)) {
-            wp_send_json_error(['message' => 'Invalid parameters']);
-        }
+        $action = sanitize_key($_POST['bulk_action'] ?? '');
+        $ids = array_filter(array_map('absint', (array)($_POST['ids'] ?? [])));
+        if (empty($action) || empty($ids)) { wp_send_json_error(['message' => 'Invalid params']); return; }
         
         global $wpdb;
-        $table = $wpdb->prefix . 'flm_social_queue';
+        $table = $this->get_queue_table();
+        $placeholders = implode(',', array_fill(0, count($ids), '%d'));
         
-        $ids_string = implode(',', $ids);
-        $count = 0;
+        $count = match($action) {
+            'cancel' => $wpdb->query($wpdb->prepare("UPDATE $table SET status='cancelled' WHERE id IN ($placeholders)", ...$ids)),
+            'approve' => $wpdb->query($wpdb->prepare("UPDATE $table SET status='pending' WHERE id IN ($placeholders) AND status='pending_approval'", ...$ids)),
+            'retry' => $wpdb->query($wpdb->prepare("UPDATE $table SET status='pending',retry_count=0,scheduled_at=NOW() WHERE id IN ($placeholders)", ...$ids)),
+            'delete' => $wpdb->query($wpdb->prepare("DELETE FROM $table WHERE id IN ($placeholders) AND status IN ('completed','cancelled','failed')", ...$ids)),
+            default => 0,
+        };
         
-        switch ($action) {
-            case 'cancel':
-                $count = $wpdb->query("UPDATE $table SET status = 'cancelled' WHERE id IN ($ids_string)");
-                break;
-            case 'approve':
-                $count = $wpdb->query("UPDATE $table SET status = 'pending' WHERE id IN ($ids_string) AND status = 'pending_approval'");
-                break;
-            case 'retry':
-                $count = $wpdb->query("UPDATE $table SET status = 'pending', retry_count = 0, scheduled_at = NOW() WHERE id IN ($ids_string)");
-                break;
-            case 'delete':
-                $count = $wpdb->query("DELETE FROM $table WHERE id IN ($ids_string) AND status IN ('completed', 'cancelled', 'failed')");
-                break;
-        }
-        
-        $this->log_activity('queue', "Bulk $action on $count items");
-        
-        wp_send_json_success(['message' => "Action completed on $count items", 'affected' => $count]);
+        $this->invalidate_queue_stats();
+        wp_send_json_success(['message' => "Completed: $count", 'affected' => $count]);
     }
     
-    // ========================================
-    // ENGAGEMENT TRACKING (v2.21.0)
-    // ========================================
+    // --- Engagement Tracking ---
     
-    /**
-     * Sync engagement metrics from Twitter (cron callback)
-     */
     public function sync_engagement_metrics() {
         $settings = $this->get_settings();
+        if (empty($settings['engagement_tracking_enabled'])) return;
         
-        if (empty($settings['engagement_tracking_enabled'])) {
-            return;
-        }
-        
-        $access_token = $this->get_twitter_access_token();
-        if (!$access_token) {
-            return;
-        }
+        $token = $this->get_twitter_access_token();
+        if (!$token) return;
         
         global $wpdb;
+        $table = $this->get_engagement_table();
+        if (!$this->table_exists($table)) return;
         
-        // Get posts with Twitter IDs from last N days
-        $days = $settings['engagement_history_days'] ?? 30;
+        $days = min(90, max(7, $settings['engagement_history_days'] ?? 30));
         $posts = $wpdb->get_results($wpdb->prepare(
-            "SELECT p.ID, pm.meta_value as tweet_id
-             FROM {$wpdb->posts} p
+            "SELECT p.ID, pm.meta_value as tweet_id FROM {$wpdb->posts} p
              INNER JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id AND pm.meta_key = '_flm_twitter_id'
-             WHERE p.post_status = 'publish'
-             AND p.post_date > DATE_SUB(NOW(), INTERVAL %d DAY)
-             AND pm.meta_value != ''
-             ORDER BY p.post_date DESC
-             LIMIT 50",
+             WHERE p.post_status = 'publish' AND p.post_date > DATE_SUB(NOW(), INTERVAL %d DAY)
+             AND pm.meta_value != '' ORDER BY p.post_date DESC LIMIT 50",
             $days
         ), ARRAY_A);
         
-        if (empty($posts)) {
-            return;
-        }
+        if (empty($posts)) return;
         
-        // Batch tweet IDs (max 100 per request)
         $tweet_ids = array_column($posts, 'tweet_id');
         $post_map = array_column($posts, 'ID', 'tweet_id');
+        $metrics = $this->fetch_twitter_metrics($tweet_ids, $token);
         
-        // Fetch metrics from Twitter
-        $metrics = $this->fetch_twitter_metrics($tweet_ids, $access_token);
+        if (empty($metrics)) return;
         
-        if (empty($metrics)) {
-            return;
-        }
-        
-        // Store metrics
-        $table = $wpdb->prefix . 'flm_engagement_metrics';
-        
-        // Check if table exists
-        if ($wpdb->get_var("SHOW TABLES LIKE '$table'") !== $table) {
-            return;
-        }
-        
-        foreach ($metrics as $tweet_id => $data) {
-            $post_id = $post_map[$tweet_id] ?? 0;
-            if (!$post_id) continue;
+        foreach ($metrics as $tid => $data) {
+            $pid = $post_map[$tid] ?? 0;
+            if (!$pid) continue;
+            
+            $eng_rate = ($data['impressions'] ?? 0) > 0 
+                ? round((($data['likes'] ?? 0) + ($data['retweets'] ?? 0) + ($data['replies'] ?? 0)) / $data['impressions'] * 100, 2)
+                : 0;
             
             $wpdb->insert($table, [
-                'post_id' => $post_id,
-                'platform' => 'twitter',
-                'external_id' => $tweet_id,
-                'impressions' => $data['impressions'] ?? 0,
-                'clicks' => $data['url_link_clicks'] ?? 0,
-                'likes' => $data['likes'] ?? 0,
-                'retweets' => $data['retweets'] ?? 0,
-                'replies' => $data['replies'] ?? 0,
-                'engagement_rate' => $this->calculate_engagement_rate($data),
+                'post_id' => $pid, 'platform' => 'twitter', 'external_id' => $tid,
+                'impressions' => $data['impressions'] ?? 0, 'clicks' => $data['url_link_clicks'] ?? 0,
+                'likes' => $data['likes'] ?? 0, 'retweets' => $data['retweets'] ?? 0,
+                'replies' => $data['replies'] ?? 0, 'engagement_rate' => $eng_rate,
                 'recorded_at' => current_time('mysql'),
+            ], ['%d', '%s', '%s', '%d', '%d', '%d', '%d', '%d', '%f', '%s']);
+            
+            update_post_meta($pid, '_flm_twitter_impressions', $data['impressions'] ?? 0);
+            update_post_meta($pid, '_flm_twitter_engagement', $eng_rate);
+            update_post_meta($pid, '_flm_twitter_synced_at', current_time('mysql'));
+        }
+        
+        delete_transient('flm_engagement_totals');
+    }
+    
+    private function fetch_twitter_metrics($tweet_ids, $token) {
+        if (empty($tweet_ids)) return [];
+        
+        $all = [];
+        foreach (array_chunk($tweet_ids, 100) as $chunk) {
+            $ids_str = implode(',', array_map('sanitize_text_field', $chunk));
+            $resp = wp_remote_get("https://api.twitter.com/2/tweets?ids={$ids_str}&tweet.fields=public_metrics", [
+                'headers' => ['Authorization' => "Bearer $token"],
+                'timeout' => 30,
             ]);
             
-            // Also update post meta with latest metrics
-            update_post_meta($post_id, '_flm_twitter_impressions', $data['impressions'] ?? 0);
-            update_post_meta($post_id, '_flm_twitter_clicks', $data['url_link_clicks'] ?? 0);
-            update_post_meta($post_id, '_flm_twitter_likes', $data['likes'] ?? 0);
-            update_post_meta($post_id, '_flm_twitter_engagement', $this->calculate_engagement_rate($data));
-            update_post_meta($post_id, '_flm_twitter_synced_at', current_time('mysql'));
-        }
-        
-        $this->log_activity('engagement', "Synced metrics for " . count($metrics) . " tweets");
-    }
-    
-    /**
-     * Fetch metrics from Twitter API v2
-     */
-    private function fetch_twitter_metrics($tweet_ids, $access_token) {
-        if (empty($tweet_ids)) {
-            return [];
-        }
-        
-        // Twitter API v2 allows up to 100 tweet IDs per request
-        $chunks = array_chunk($tweet_ids, 100);
-        $all_metrics = [];
-        
-        foreach ($chunks as $chunk) {
-            $ids_string = implode(',', $chunk);
+            if (is_wp_error($resp)) continue;
+            $body = json_decode(wp_remote_retrieve_body($resp), true);
             
-            $response = wp_remote_get(
-                "https://api.twitter.com/2/tweets?ids={$ids_string}&tweet.fields=public_metrics",
-                [
-                    'headers' => [
-                        'Authorization' => 'Bearer ' . $access_token,
-                    ],
-                    'timeout' => 30,
-                ]
-            );
-            
-            if (is_wp_error($response)) {
-                $this->log_error('warning', 'engagement', 'Twitter API error: ' . $response->get_error_message());
-                continue;
-            }
-            
-            $body = json_decode(wp_remote_retrieve_body($response), true);
-            
-            if (isset($body['data']) && is_array($body['data'])) {
-                foreach ($body['data'] as $tweet) {
-                    $metrics = $tweet['public_metrics'] ?? [];
-                    $all_metrics[$tweet['id']] = [
-                        'impressions' => $metrics['impression_count'] ?? 0,
-                        'likes' => $metrics['like_count'] ?? 0,
-                        'retweets' => $metrics['retweet_count'] ?? 0,
-                        'replies' => $metrics['reply_count'] ?? 0,
-                        'quotes' => $metrics['quote_count'] ?? 0,
-                        'bookmarks' => $metrics['bookmark_count'] ?? 0,
-                    ];
-                }
+            foreach (($body['data'] ?? []) as $t) {
+                $m = $t['public_metrics'] ?? [];
+                $all[$t['id']] = [
+                    'impressions' => $m['impression_count'] ?? 0, 'likes' => $m['like_count'] ?? 0,
+                    'retweets' => $m['retweet_count'] ?? 0, 'replies' => $m['reply_count'] ?? 0,
+                ];
             }
         }
-        
-        return $all_metrics;
+        return $all;
     }
     
-    /**
-     * Calculate engagement rate from metrics
-     */
-    private function calculate_engagement_rate($metrics) {
-        $impressions = $metrics['impressions'] ?? 0;
-        if ($impressions <= 0) return 0;
-        
-        $engagements = ($metrics['likes'] ?? 0) + 
-                       ($metrics['retweets'] ?? 0) + 
-                       ($metrics['replies'] ?? 0) + 
-                       ($metrics['url_link_clicks'] ?? 0);
-        
-        return round(($engagements / $impressions) * 100, 2);
-    }
-    
-    /**
-     * AJAX: Get engagement metrics
-     */
     public function ajax_get_engagement_metrics() {
-        check_ajax_referer('flm_nonce', 'nonce');
+        if (!$this->verify_ajax_admin()) return;
         
-        if (!current_user_can('manage_options')) {
-            wp_send_json_error(['message' => 'Permission denied']);
-        }
-        
-        $days = isset($_POST['days']) ? intval($_POST['days']) : 7;
+        $days = min(90, max(1, absint($_POST['days'] ?? 7)));
+        $cached = get_transient('flm_engagement_totals');
         
         global $wpdb;
-        $table = $wpdb->prefix . 'flm_engagement_metrics';
+        $table = $this->get_engagement_table();
         
-        // Check if table exists
-        if ($wpdb->get_var("SHOW TABLES LIKE '$table'") !== $table) {
-            wp_send_json_success($this->get_mock_engagement_data());
+        if (!$this->table_exists($table)) {
+            wp_send_json_success(['totals' => ['impressions' => 0, 'clicks' => 0, 'likes' => 0, 'retweets' => 0, 'replies' => 0, 'engagement_rate' => 0, 'posts_tracked' => 0], 'daily' => [], 'top_posts' => [], 'last_sync' => null]);
             return;
         }
         
-        // Get aggregated metrics
         $totals = $wpdb->get_row($wpdb->prepare(
-            "SELECT 
-                SUM(impressions) as total_impressions,
-                SUM(clicks) as total_clicks,
-                SUM(likes) as total_likes,
-                SUM(retweets) as total_retweets,
-                SUM(replies) as total_replies,
-                AVG(engagement_rate) as avg_engagement_rate,
-                COUNT(DISTINCT post_id) as posts_tracked
-             FROM $table
-             WHERE recorded_at > DATE_SUB(NOW(), INTERVAL %d DAY)",
-            $days
+            "SELECT SUM(impressions) i, SUM(clicks) c, SUM(likes) l, SUM(retweets) rt, SUM(replies) rp, AVG(engagement_rate) er, COUNT(DISTINCT post_id) pt
+             FROM $table WHERE recorded_at > DATE_SUB(NOW(), INTERVAL %d DAY)", $days
         ), ARRAY_A);
         
-        // Get daily breakdown
         $daily = $wpdb->get_results($wpdb->prepare(
-            "SELECT 
-                DATE(recorded_at) as date,
-                SUM(impressions) as impressions,
-                SUM(clicks) as clicks,
-                AVG(engagement_rate) as engagement_rate
-             FROM $table
-             WHERE recorded_at > DATE_SUB(NOW(), INTERVAL %d DAY)
-             GROUP BY DATE(recorded_at)
-             ORDER BY date ASC",
-            $days
+            "SELECT DATE(recorded_at) d, SUM(impressions) i, SUM(clicks) c, AVG(engagement_rate) er
+             FROM $table WHERE recorded_at > DATE_SUB(NOW(), INTERVAL %d DAY) GROUP BY d ORDER BY d", $days
         ), ARRAY_A);
         
-        // Get top performing posts
-        $top_posts = $wpdb->get_results($wpdb->prepare(
-            "SELECT 
-                e.post_id,
-                p.post_title,
-                MAX(e.impressions) as impressions,
-                MAX(e.engagement_rate) as engagement_rate,
-                pm.meta_value as team
-             FROM $table e
-             LEFT JOIN {$wpdb->posts} p ON e.post_id = p.ID
-             LEFT JOIN {$wpdb->postmeta} pm ON e.post_id = pm.post_id AND pm.meta_key = 'flm_team'
-             WHERE e.recorded_at > DATE_SUB(NOW(), INTERVAL %d DAY)
-             GROUP BY e.post_id
-             ORDER BY engagement_rate DESC
-             LIMIT 10",
-            $days
+        $top = $wpdb->get_results($wpdb->prepare(
+            "SELECT e.post_id, p.post_title, MAX(e.impressions) i, MAX(e.engagement_rate) er
+             FROM $table e LEFT JOIN {$wpdb->posts} p ON e.post_id = p.ID
+             WHERE e.recorded_at > DATE_SUB(NOW(), INTERVAL %d DAY) GROUP BY e.post_id ORDER BY er DESC LIMIT 10", $days
         ), ARRAY_A);
         
-        // Get last sync time
-        $last_sync = $wpdb->get_var("SELECT MAX(recorded_at) FROM $table");
+        $last = $wpdb->get_var("SELECT MAX(recorded_at) FROM $table");
         
         wp_send_json_success([
-            'totals' => [
-                'impressions' => intval($totals['total_impressions'] ?? 0),
-                'clicks' => intval($totals['total_clicks'] ?? 0),
-                'likes' => intval($totals['total_likes'] ?? 0),
-                'retweets' => intval($totals['total_retweets'] ?? 0),
-                'replies' => intval($totals['total_replies'] ?? 0),
-                'engagement_rate' => round(floatval($totals['avg_engagement_rate'] ?? 0), 2),
-                'posts_tracked' => intval($totals['posts_tracked'] ?? 0),
-            ],
-            'daily' => $daily,
-            'top_posts' => $top_posts,
-            'last_sync' => $last_sync,
+            'totals' => ['impressions' => (int)($totals['i'] ?? 0), 'clicks' => (int)($totals['c'] ?? 0), 'likes' => (int)($totals['l'] ?? 0), 'retweets' => (int)($totals['rt'] ?? 0), 'replies' => (int)($totals['rp'] ?? 0), 'engagement_rate' => round((float)($totals['er'] ?? 0), 2), 'posts_tracked' => (int)($totals['pt'] ?? 0)],
+            'daily' => $daily, 'top_posts' => $top, 'last_sync' => $last,
         ]);
     }
     
-    /**
-     * Get mock engagement data for display when no real data available
-     */
-    private function get_mock_engagement_data() {
-        return [
-            'totals' => [
-                'impressions' => 0,
-                'clicks' => 0,
-                'likes' => 0,
-                'retweets' => 0,
-                'replies' => 0,
-                'engagement_rate' => 0,
-                'posts_tracked' => 0,
-            ],
-            'daily' => [],
-            'top_posts' => [],
-            'last_sync' => null,
-            'message' => 'No engagement data yet. Enable tracking and post to Twitter to start collecting metrics.',
-        ];
-    }
-    
-    /**
-     * AJAX: Sync engagement now
-     */
     public function ajax_sync_engagement_now() {
-        check_ajax_referer('flm_nonce', 'nonce');
-        
-        if (!current_user_can('manage_options')) {
-            wp_send_json_error(['message' => 'Permission denied']);
-        }
-        
+        if (!$this->verify_ajax_admin()) return;
         $this->sync_engagement_metrics();
-        
-        wp_send_json_success(['message' => 'Engagement metrics synced successfully']);
+        wp_send_json_success(['message' => 'Synced']);
     }
     
-    /**
-     * AJAX: Get single post engagement
-     */
     public function ajax_get_post_engagement() {
-        check_ajax_referer('flm_nonce', 'nonce');
-        
-        if (!current_user_can('manage_options')) {
-            wp_send_json_error(['message' => 'Permission denied']);
-        }
-        
-        $post_id = isset($_POST['post_id']) ? intval($_POST['post_id']) : 0;
-        
-        if (!$post_id) {
-            wp_send_json_error(['message' => 'Invalid post ID']);
-        }
+        if (!$this->verify_ajax_admin()) return;
+        $pid = absint($_POST['post_id'] ?? 0);
+        if (!$pid) { wp_send_json_error(['message' => 'Invalid post']); return; }
         
         global $wpdb;
-        $table = $wpdb->prefix . 'flm_engagement_metrics';
+        $table = $this->get_engagement_table();
         
-        // Check if table exists
-        if ($wpdb->get_var("SHOW TABLES LIKE '$table'") !== $table) {
-            // Return from post meta
-            wp_send_json_success([
-                'twitter' => [
-                    'impressions' => intval(get_post_meta($post_id, '_flm_twitter_impressions', true)),
-                    'clicks' => intval(get_post_meta($post_id, '_flm_twitter_clicks', true)),
-                    'likes' => intval(get_post_meta($post_id, '_flm_twitter_likes', true)),
-                    'engagement_rate' => floatval(get_post_meta($post_id, '_flm_twitter_engagement', true)),
-                    'last_synced' => get_post_meta($post_id, '_flm_twitter_synced_at', true),
-                ],
-            ]);
-            return;
-        }
-        
-        // Get historical data for this post
-        $history = $wpdb->get_results($wpdb->prepare(
-            "SELECT * FROM $table 
-             WHERE post_id = %d 
-             ORDER BY recorded_at DESC 
-             LIMIT 30",
-            $post_id
-        ), ARRAY_A);
-        
-        // Get latest metrics
-        $latest = !empty($history) ? $history[0] : null;
+        $history = $this->table_exists($table) 
+            ? $wpdb->get_results($wpdb->prepare("SELECT * FROM $table WHERE post_id = %d ORDER BY recorded_at DESC LIMIT 30", $pid), ARRAY_A)
+            : [];
         
         wp_send_json_success([
-            'latest' => $latest,
-            'history' => $history,
-            'post_meta' => [
-                'twitter_id' => get_post_meta($post_id, '_flm_twitter_id', true),
-                'posted_at' => get_post_meta($post_id, '_flm_twitter_posted_at', true),
-            ],
+            'latest' => $history[0] ?? null, 'history' => $history,
+            'post_meta' => ['twitter_id' => get_post_meta($pid, '_flm_twitter_id', true), 'posted_at' => get_post_meta($pid, '_flm_twitter_posted_at', true)],
         ]);
     }
     
-    /**
-     * Override the ajax_get_social_metrics to use real data
-     */
-    public function get_real_social_metrics() {
-        $settings = $this->get_settings();
-        
-        global $wpdb;
-        $table = $wpdb->prefix . 'flm_engagement_metrics';
-        
-        // Check if table exists and has data
-        if ($wpdb->get_var("SHOW TABLES LIKE '$table'") !== $table) {
-            return null;
-        }
-        
-        $twitter = $wpdb->get_row(
-            "SELECT 
-                SUM(impressions) as impressions,
-                SUM(clicks) as clicks,
-                SUM(likes) + SUM(retweets) + SUM(replies) as engagements
-             FROM $table 
-             WHERE platform = 'twitter' 
-             AND recorded_at > DATE_SUB(NOW(), INTERVAL 7 DAY)",
-            ARRAY_A
-        );
-        
-        if ($twitter && $twitter['impressions'] > 0) {
-            return [
-                'twitter' => [
-                    'impressions' => intval($twitter['impressions']),
-                    'engagements' => intval($twitter['engagements']),
-                    'clicks' => intval($twitter['clicks']),
-                ],
-                'facebook' => [
-                    'reach' => 0,
-                    'engagements' => 0,
-                    'clicks' => 0,
-                ],
-            ];
-        }
-        
-        return null;
-    }
-    
-    // ========================================
     // END PHASE 1 SOCIAL INFRASTRUCTURE
-    // ========================================
     
     // ========================================
     // CONTENT & PUBLISHING (v2.10.0)
