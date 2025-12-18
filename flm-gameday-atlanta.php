@@ -3,7 +3,7 @@
  * Plugin Name: FLM GameDay Atlanta
  * Plugin URI: https://github.com/mainlinemedia/flm-gameday-atlanta
  * Description: Import Braves, Hawks, Falcons, United, Dream, UGA & GT content from Field Level Media with AI enhancement, social posting, and analytics.
- * Version: 2.22.0
+ * Version: 2.23.0
  * Author: Austin / Mainline Media Group
  * Author URI: https://mainlinemediagroup.com
  * License: Proprietary
@@ -20,7 +20,7 @@ if (!defined('ABSPATH')) exit;
 class FLM_GameDay_Atlanta {
     
     private $api_base = 'https://api.fieldlevelmedia.com/v1';
-    private $version = '2.22.0';
+    private $version = '2.23.0';
     
     // GitHub Update Configuration
     private $github_username = 'mainlinemedia';
@@ -69,6 +69,9 @@ class FLM_GameDay_Atlanta {
             'dream' => true,
             'uga' => true,
             'gt' => true,
+            'olemiss' => true,
+            'alabama' => true,
+            'auburn' => true,
             'faze' => true,
         ],
         'create_team_categories' => true,
@@ -315,6 +318,39 @@ class FLM_GameDay_Atlanta {
             'color' => '#B3A369',
             'secondary' => '#003057',
         ],
+        'olemiss' => [
+            'name' => 'Ole Miss Rebels',
+            'category_name' => 'Ole Miss',
+            'league' => 'NCAA',
+            'league_id' => 31,  // Primary: NCAAF
+            'league_ids' => [31, 20, 27],  // NCAAF + NCAAB + WNCAAB
+            'identifiers' => ['Ole Miss', 'Rebels', 'Mississippi', 'Ole Miss Rebels'],
+            'team_ids' => ['281', '796', '1114'],  // NCAAF: 281, NCAAB: 796, WNCAAB: 1114
+            'color' => '#CE1126',
+            'secondary' => '#14213D',
+        ],
+        'alabama' => [
+            'name' => 'Alabama Crimson Tide',
+            'category_name' => 'Alabama',
+            'league' => 'NCAA',
+            'league_id' => 31,  // Primary: NCAAF
+            'league_ids' => [31, 20, 27],  // NCAAF + NCAAB + WNCAAB
+            'identifiers' => ['Alabama', 'Crimson Tide', 'Bama', 'Roll Tide'],
+            'team_ids' => ['160', '800', '1118'],  // NCAAF: 160, NCAAB: 800, WNCAAB: 1118
+            'color' => '#9E1B32',
+            'secondary' => '#828A8F',
+        ],
+        'auburn' => [
+            'name' => 'Auburn Tigers',
+            'category_name' => 'Auburn',
+            'league' => 'NCAA',
+            'league_id' => 31,  // Primary: NCAAF
+            'league_ids' => [31, 20, 27],  // NCAAF + NCAAB + WNCAAB
+            'identifiers' => ['Auburn', 'Tigers', 'War Eagle', 'Auburn Tigers'],
+            'team_ids' => ['172', '803', '1121'],  // NCAAF: 172, NCAAB: 803, WNCAAB: 1121
+            'color' => '#0C2340',
+            'secondary' => '#E87722',
+        ],
         'faze' => [
             'name' => 'Atlanta FaZe / Reign',
             'category_name' => 'Atlanta Esports',
@@ -344,7 +380,7 @@ class FLM_GameDay_Atlanta {
     private $icons = [];
     
     public function __construct() {
-        $this->init_icons();
+        // Icons are lazy-loaded on first use (v2.22.1)
         
         // Custom cron schedules
         add_filter('cron_schedules', [$this, 'add_cron_schedules']);
@@ -543,7 +579,13 @@ class FLM_GameDay_Atlanta {
     /**
      * Initialize SVG icons
      */
+    /** @var bool Icons initialized flag */
+    private $icons_initialized = false;
+    
     private function init_icons() {
+        if ($this->icons_initialized) return;
+        $this->icons_initialized = true;
+        
         $this->icons = [
             'stadium' => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="8" rx="9" ry="4"/><path d="M3 8v8c0 2.2 4 4 9 4s9-1.8 9-4V8"/><path d="M3 12c0 2.2 4 4 9 4s9-1.8 9-4"/></svg>',
             'bolt' => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>',
@@ -581,9 +623,10 @@ class FLM_GameDay_Atlanta {
     }
     
     /**
-     * Get icon SVG
+     * Get icon SVG (lazy initialization)
      */
     private function icon($name, $class = '') {
+        if (!$this->icons_initialized) $this->init_icons();
         $svg = $this->icons[$name] ?? '';
         if ($class) {
             $svg = str_replace('<svg ', '<svg class="' . esc_attr($class) . '" ', $svg);
@@ -612,6 +655,15 @@ class FLM_GameDay_Atlanta {
             case 'gt':
                 // Georgia Tech "GT"
                 return '<span class="flm-team-logo">GT</span>';
+            case 'olemiss':
+                // Ole Miss "OM"
+                return '<span class="flm-team-logo">OM</span>';
+            case 'alabama':
+                // Alabama "A"
+                return '<span class="flm-team-logo">A</span>';
+            case 'auburn':
+                // Auburn "AU"
+                return '<span class="flm-team-logo">AU</span>';
             default:
                 return $this->icon('trophy');
         }
@@ -15162,7 +15214,18 @@ class FLM_GameDay_Atlanta {
     /**
      * Get plugin settings
      */
+    /** @var array|null Static settings cache */
+    private static $settings_cache = null;
+    
+    /** @var bool Settings cache dirty flag */
+    private static $settings_dirty = false;
+    
     private function get_settings() {
+        // Return cached settings if available and not dirty
+        if (self::$settings_cache !== null && !self::$settings_dirty) {
+            return self::$settings_cache;
+        }
+        
         $settings = get_option('flm_settings', []);
         $merged = wp_parse_args($settings, $this->default_settings);
         
@@ -15171,7 +15234,28 @@ class FLM_GameDay_Atlanta {
             $merged['api_key'] = $this->default_settings['api_key'];
         }
         
+        // Cache for subsequent calls
+        self::$settings_cache = $merged;
+        self::$settings_dirty = false;
+        
         return $merged;
+    }
+    
+    /**
+     * Save settings with cache invalidation
+     */
+    private function save_settings($settings) {
+        update_option('flm_settings', $settings);
+        self::$settings_cache = null;
+        self::$settings_dirty = true;
+    }
+    
+    /**
+     * Invalidate settings cache (call after saving)
+     */
+    private function invalidate_settings_cache() {
+        self::$settings_cache = null;
+        self::$settings_dirty = true;
     }
     
     /**
@@ -15789,6 +15873,9 @@ class FLM_GameDay_Atlanta {
             'dream' => '#AtlantaDream #DreamOn #WNBA',
             'uga' => '#UGA #GoDawgs #Dawgs #Georgia #SEC',
             'gt' => '#GaTech #TogetherWeSwarm #YellowJackets #ACC',
+            'olemiss' => '#OleMiss #HottyToddy #Rebels #SEC',
+            'alabama' => '#RollTide #Alabama #CrimsonTide #SEC',
+            'auburn' => '#WarEagle #Auburn #Tigers #SEC',
             'faze' => '#FaZeUp #FaZeClan #AtlantaFaZe #Esports #Gaming',
         ];
         
@@ -15852,6 +15939,9 @@ class FLM_GameDay_Atlanta {
             'dream' => '#AtlantaDream #DreamOn',
             'uga' => '#UGA #GoDawgs',
             'gt' => '#GaTech #TogetherWeSwarm',
+            'olemiss' => '#OleMiss #HottyToddy',
+            'alabama' => '#RollTide #RTR',
+            'auburn' => '#WarEagle #Auburn',
             'faze' => '#FaZeUp #FaZeClan',
         ];
         
@@ -17109,6 +17199,8 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
             'braves' => 1.3, 'falcons' => 1.2, 'hawks' => 1.0,
             'united' => 1.1, 'dream' => 0.8,
             'uga' => 1.4, 'gt' => 0.9,
+            'olemiss' => 1.1, 'alabama' => 1.5, 'auburn' => 1.3,
+            'faze' => 0.7,
         ];
         $team_mult = $team_multipliers[$team] ?? 1.0;
         
@@ -17611,6 +17703,21 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
                 ['type' => 'Recap', 'headline' => 'Key Takeaways from GT\'s Spring Practice', 'reason' => 'Spring football content engages fans'],
                 ['type' => 'Analysis', 'headline' => 'ACC Preview: Where Does GT Stack Up?', 'reason' => 'Conference context adds value'],
             ],
+            'olemiss' => [
+                ['type' => 'News', 'headline' => 'Ole Miss Portal Update: Key Additions and Departures', 'reason' => 'Transfer portal drives SEC engagement'],
+                ['type' => 'Preview', 'headline' => 'Rebels 2025: Position Battles to Watch', 'reason' => 'Competition storylines build interest'],
+                ['type' => 'Analysis', 'headline' => 'Lane Kiffin\'s Offense: What to Expect This Season', 'reason' => 'Coach-focused content performs well'],
+            ],
+            'alabama' => [
+                ['type' => 'News', 'headline' => 'Alabama Lands Top Recruit: Impact Analysis', 'reason' => 'Bama recruiting is always national news'],
+                ['type' => 'Preview', 'headline' => 'Crimson Tide QB Battle: Breaking Down the Contenders', 'reason' => 'QB competitions drive massive traffic'],
+                ['type' => 'Analysis', 'headline' => 'Post-Saban Era: What\'s Different Under New Leadership', 'reason' => 'Program transition content is must-read'],
+            ],
+            'auburn' => [
+                ['type' => 'News', 'headline' => 'Auburn Transfer Portal: Who\'s In and Who\'s Out', 'reason' => 'Portal coverage essential for SEC fans'],
+                ['type' => 'Preview', 'headline' => 'Tigers Spring Preview: Key Position Battles', 'reason' => 'Spring content builds anticipation'],
+                ['type' => 'Analysis', 'headline' => 'Auburn\'s Path to SEC West Contention', 'reason' => 'Competitive outlook drives engagement'],
+            ],
         ];
         
         $ideas = $templates[$team] ?? array_merge(...array_values($templates));
@@ -17812,6 +17919,9 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
         $preview_stories = [];
         $skipped = 0;
         $errors = [];
+        
+        // v2.22.1: Clear caches for fresh preview
+        $this->clear_fuzzy_cache();
         
         $this->log_error('info', 'preview', 'Starting dry-run preview', []);
         
@@ -18551,6 +18661,7 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
         $settings['facebook_oauth_selected_page'] = $old_settings['facebook_oauth_selected_page'] ?? '';
         
         update_option('flm_settings', $settings);
+        $this->invalidate_settings_cache();
         
         // Clear ESP cache if provider changed
         $old_esp = $old_settings['esp_provider'] ?? 'none';
@@ -19179,7 +19290,8 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
         $hashtags = [
             'braves' => '#Braves #ForTheA', 'falcons' => '#Falcons #RiseUp', 'hawks' => '#Hawks #TrueToAtlanta',
             'united' => '#ATLUTD #UniteAndConquer', 'dream' => '#AtlantaDream', 'uga' => '#UGA #GoDawgs',
-            'gt' => '#GaTech #TogetherWeSwarm', 'faze' => '#FaZeUp', 'reign' => '#ATLReign',
+            'gt' => '#GaTech #TogetherWeSwarm', 'olemiss' => '#OleMiss #HottyToddy', 'alabama' => '#RollTide #RTR',
+            'auburn' => '#WarEagle #Auburn', 'faze' => '#FaZeUp', 'reign' => '#ATLReign',
         ];
         
         $tweet = str_replace(
@@ -19308,49 +19420,106 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
     /**
      * Check for fuzzy duplicate by title similarity (v2.22.0)
      */
+    /** @var array Cache for recent posts by team (fuzzy duplicate check) */
+    private static $recent_posts_cache = [];
+    
+    /**
+     * Check for fuzzy duplicate by title similarity (v2.22.0)
+     * Optimized with per-team caching (v2.22.1)
+     */
     private function find_fuzzy_duplicate($headline, $team_key, $threshold = 85) {
         global $wpdb;
         
-        // Get recent posts from same team (last 7 days)
-        $recent_posts = $wpdb->get_results($wpdb->prepare(
-            "SELECT p.ID, p.post_title FROM {$wpdb->posts} p
-             INNER JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id AND pm.meta_key = 'flm_team' AND pm.meta_value = %s
-             WHERE p.post_type = 'post' AND p.post_status IN ('publish','draft','pending')
-             AND p.post_date > DATE_SUB(NOW(), INTERVAL 7 DAY)
-             ORDER BY p.post_date DESC LIMIT 100",
-            $team_key
-        ), ARRAY_A);
+        // Use cached recent posts if available
+        if (!isset(self::$recent_posts_cache[$team_key])) {
+            self::$recent_posts_cache[$team_key] = $wpdb->get_results($wpdb->prepare(
+                "SELECT p.ID, p.post_title FROM {$wpdb->posts} p
+                 INNER JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id AND pm.meta_key = 'flm_team' AND pm.meta_value = %s
+                 WHERE p.post_type = 'post' AND p.post_status IN ('publish','draft','pending')
+                 AND p.post_date > DATE_SUB(NOW(), INTERVAL 7 DAY)
+                 ORDER BY p.post_date DESC LIMIT 200",
+                $team_key
+            ), ARRAY_A) ?: [];
+        }
         
+        $recent_posts = self::$recent_posts_cache[$team_key];
         if (empty($recent_posts)) return null;
         
         $headline_normalized = $this->normalize_headline($headline);
+        $headline_len = strlen($headline_normalized);
         
         foreach ($recent_posts as $post) {
             $existing_normalized = $this->normalize_headline($post['post_title']);
             
-            // Check exact match first
+            // Check exact match first (fastest)
             if ($headline_normalized === $existing_normalized) {
-                return ['post_id' => $post['ID'], 'similarity' => 100, 'title' => $post['post_title']];
+                return ['post_id' => (int)$post['ID'], 'similarity' => 100, 'title' => $post['post_title']];
             }
+            
+            // Quick length check - skip if too different in length
+            $existing_len = strlen($existing_normalized);
+            $len_ratio = $headline_len > 0 ? min($headline_len, $existing_len) / max($headline_len, $existing_len) : 0;
+            if ($len_ratio < 0.5) continue; // Skip if length differs by more than 50%
             
             // Check similarity
             similar_text($headline_normalized, $existing_normalized, $percent);
             if ($percent >= $threshold) {
-                return ['post_id' => $post['ID'], 'similarity' => round($percent), 'title' => $post['post_title']];
+                return ['post_id' => (int)$post['ID'], 'similarity' => round($percent), 'title' => $post['post_title']];
             }
             
-            // Also check Levenshtein for short headlines
-            if (strlen($headline_normalized) < 100 && strlen($existing_normalized) < 100) {
+            // Levenshtein for short headlines only (expensive for long strings)
+            if ($headline_len < 80 && $existing_len < 80) {
                 $lev = levenshtein($headline_normalized, $existing_normalized);
-                $max_len = max(strlen($headline_normalized), strlen($existing_normalized));
+                $max_len = max($headline_len, $existing_len);
                 $lev_percent = $max_len > 0 ? (1 - ($lev / $max_len)) * 100 : 0;
                 if ($lev_percent >= $threshold) {
-                    return ['post_id' => $post['ID'], 'similarity' => round($lev_percent), 'title' => $post['post_title']];
+                    return ['post_id' => (int)$post['ID'], 'similarity' => round($lev_percent), 'title' => $post['post_title']];
                 }
             }
         }
         
         return null;
+    }
+    
+    /**
+     * Clear fuzzy duplicate cache (call at start of import/preview)
+     */
+    private function clear_fuzzy_cache() {
+        self::$recent_posts_cache = [];
+    }
+    
+    /**
+     * Batch lookup existing posts by story IDs (v2.22.1 optimization)
+     * Returns map of story_id => ['post_id' => int, 'status' => string]
+     */
+    private function batch_lookup_existing_stories(array $story_ids) {
+        if (empty($story_ids)) return [];
+        
+        global $wpdb;
+        
+        // Sanitize and prepare story IDs
+        $placeholders = implode(',', array_fill(0, count($story_ids), '%s'));
+        $query = $wpdb->prepare(
+            "SELECT pm.meta_value as story_id, p.ID as post_id, p.post_status 
+             FROM {$wpdb->postmeta} pm
+             INNER JOIN {$wpdb->posts} p ON pm.post_id = p.ID
+             WHERE pm.meta_key = 'flm_story_id' 
+             AND pm.meta_value IN ($placeholders)
+             AND p.post_type = 'post'",
+            ...$story_ids
+        );
+        
+        $results = $wpdb->get_results($query, ARRAY_A);
+        
+        $map = [];
+        foreach ($results as $row) {
+            $map[$row['story_id']] = [
+                'post_id' => (int)$row['post_id'],
+                'status' => $row['post_status'],
+            ];
+        }
+        
+        return $map;
     }
     
     /**
@@ -19777,6 +19946,9 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
             'dream' => '#AtlantaDream #DreamOn',
             'uga' => '#UGA #GoDawgs',
             'gt' => '#GaTech #TogetherWeSwarm',
+            'olemiss' => '#OleMiss #HottyToddy',
+            'alabama' => '#RollTide #RTR',
+            'auburn' => '#WarEagle #Auburn',
             'faze' => '#FaZeUp #FaZeClan',
         ];
         
@@ -20222,7 +20394,11 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
             'united' => '#80000a',
             'dream' => '#e31837',
             'uga' => '#ba0c2f',
-            'gt' => '#b3a369'
+            'gt' => '#b3a369',
+            'olemiss' => '#ce1126',
+            'alabama' => '#9e1b32',
+            'auburn' => '#0c2340',
+            'faze' => '#ff0000'
         ];
         ?>
         <section class="flm-analytics-section" id="flm-analytics">
@@ -23794,6 +23970,10 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
             'dream' => '#e31837',
             'uga' => '#ba0c2f',
             'gt' => '#b3a369',
+            'olemiss' => '#ce1126',
+            'alabama' => '#9e1b32',
+            'auburn' => '#0c2340',
+            'faze' => '#ff0000',
         ];
         
         $status_colors = [
@@ -25709,6 +25889,10 @@ Respond in JSON format only:
                 'dream' => '#AtlantaDream #DreamOn',
                 'uga' => '#UGA #GoDawgs',
                 'gt' => '#GaTech #TogetherWeSwarm',
+                'olemiss' => '#OleMiss #HottyToddy',
+                'alabama' => '#RollTide #RTR',
+                'auburn' => '#WarEagle #Auburn',
+                'faze' => '#FaZeUp #FaZeClan',
             ];
             
             $tweet_text = str_replace([
