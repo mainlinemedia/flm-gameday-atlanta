@@ -3,7 +3,7 @@
  * Plugin Name: FLM GameDay Atlanta
  * Plugin URI: https://github.com/mainlinemedia/flm-gameday-atlanta
  * Description: Import Braves, Hawks, Falcons, United, Dream, UGA & GT content from Field Level Media with AI enhancement, social posting, and analytics.
- * Version: 2.23.1
+ * Version: 2.23.3
  * Author: Austin / Mainline Media Group
  * Author URI: https://mainlinemediagroup.com
  * License: Proprietary
@@ -20,7 +20,7 @@ if (!defined('ABSPATH')) exit;
 class FLM_GameDay_Atlanta {
     
     private $api_base = 'https://api.fieldlevelmedia.com/v1';
-    private $version = '2.23.1';
+    private $version = '2.23.3';
     
     // GitHub Update Configuration
     private $github_username = 'mainlinemedia';
@@ -418,7 +418,6 @@ class FLM_GameDay_Atlanta {
         add_action('wp_ajax_flm_save_settings', [$this, 'ajax_save_settings']);
         add_action('wp_ajax_flm_clear_log', [$this, 'ajax_clear_log']);
         add_action('wp_ajax_flm_clear_error_log', [$this, 'ajax_clear_error_log']);
-        add_action('wp_ajax_flm_get_import_status', [$this, 'ajax_get_import_status']);
         add_action('wp_ajax_flm_dry_run_preview', [$this, 'ajax_dry_run_preview']);
         add_action('wp_ajax_flm_selective_import', [$this, 'ajax_selective_import']);
         add_action('wp_ajax_flm_purge_old_posts', [$this, 'ajax_purge_old_posts']);
@@ -1113,12 +1112,30 @@ class FLM_GameDay_Atlanta {
     --flm-team-hawks: #e03a3e;
     --flm-team-hawks-secondary: #c1d32f;
     --flm-team-hawks-glow: rgba(224, 58, 62, 0.3);
+    --flm-team-united: #80000a;
+    --flm-team-united-secondary: #231f20;
+    --flm-team-united-glow: rgba(128, 0, 10, 0.3);
+    --flm-team-dream: #e31837;
+    --flm-team-dream-secondary: #0c2340;
+    --flm-team-dream-glow: rgba(227, 24, 55, 0.3);
     --flm-team-uga: #ba0c2f;
     --flm-team-uga-secondary: #000000;
     --flm-team-uga-glow: rgba(186, 12, 47, 0.3);
     --flm-team-gt: #b3a369;
     --flm-team-gt-secondary: #003057;
     --flm-team-gt-glow: rgba(179, 163, 105, 0.3);
+    --flm-team-olemiss: #ce1126;
+    --flm-team-olemiss-secondary: #14213d;
+    --flm-team-olemiss-glow: rgba(206, 17, 38, 0.3);
+    --flm-team-alabama: #9e1b32;
+    --flm-team-alabama-secondary: #828a8f;
+    --flm-team-alabama-glow: rgba(158, 27, 50, 0.3);
+    --flm-team-auburn: #0c2340;
+    --flm-team-auburn-secondary: #e87722;
+    --flm-team-auburn-glow: rgba(12, 35, 64, 0.3);
+    --flm-team-faze: #ff0000;
+    --flm-team-faze-secondary: #000000;
+    --flm-team-faze-glow: rgba(255, 0, 0, 0.3);
 }
 
 /* Base Reset */
@@ -2221,6 +2238,48 @@ class FLM_GameDay_Atlanta {
     --team-glow: var(--flm-team-gt-glow); 
     --team-color-rgb: 179,163,105;
     --team-secondary-rgb: 0,48,87;
+}
+.flm-team-card[data-team="united"] { 
+    --team-color: var(--flm-team-united); 
+    --team-secondary: var(--flm-team-united-secondary);
+    --team-glow: var(--flm-team-united-glow); 
+    --team-color-rgb: 128,0,10;
+    --team-secondary-rgb: 35,31,32;
+}
+.flm-team-card[data-team="dream"] { 
+    --team-color: var(--flm-team-dream); 
+    --team-secondary: var(--flm-team-dream-secondary);
+    --team-glow: var(--flm-team-dream-glow); 
+    --team-color-rgb: 227,24,55;
+    --team-secondary-rgb: 12,35,64;
+}
+.flm-team-card[data-team="olemiss"] { 
+    --team-color: var(--flm-team-olemiss); 
+    --team-secondary: var(--flm-team-olemiss-secondary);
+    --team-glow: var(--flm-team-olemiss-glow); 
+    --team-color-rgb: 206,17,38;
+    --team-secondary-rgb: 20,33,61;
+}
+.flm-team-card[data-team="alabama"] { 
+    --team-color: var(--flm-team-alabama); 
+    --team-secondary: var(--flm-team-alabama-secondary);
+    --team-glow: var(--flm-team-alabama-glow); 
+    --team-color-rgb: 158,27,50;
+    --team-secondary-rgb: 130,138,143;
+}
+.flm-team-card[data-team="auburn"] { 
+    --team-color: var(--flm-team-auburn); 
+    --team-secondary: var(--flm-team-auburn-secondary);
+    --team-glow: var(--flm-team-auburn-glow); 
+    --team-color-rgb: 12,35,64;
+    --team-secondary-rgb: 232,119,34;
+}
+.flm-team-card[data-team="faze"] { 
+    --team-color: var(--flm-team-faze); 
+    --team-secondary: var(--flm-team-faze-secondary);
+    --team-glow: var(--flm-team-faze-glow); 
+    --team-color-rgb: 255,0,0;
+    --team-secondary-rgb: 0,0,0;
 }
 
 .flm-team-info {
@@ -15295,6 +15354,71 @@ class FLM_GameDay_Atlanta {
     }
     
     /**
+     * Get team hashtags for social media posting
+     * Centralized to avoid duplication across methods
+     * 
+     * @param string $team_key Team key (e.g., 'braves', 'uga', 'olemiss')
+     * @param string $format 'short' for Twitter (2-3 hashtags), 'full' for Instagram (5+ hashtags)
+     * @return string Hashtag string
+     */
+    private function get_team_hashtags($team_key, $format = 'short') {
+        $hashtags = [
+            'braves' => [
+                'short' => '#Braves #ForTheA',
+                'full' => '#Braves #ForTheA #ChopOn #AtlantaBraves #MLB',
+            ],
+            'falcons' => [
+                'short' => '#Falcons #RiseUp',
+                'full' => '#Falcons #RiseUp #DirtyBirds #AtlantaFalcons #NFL',
+            ],
+            'hawks' => [
+                'short' => '#Hawks #TrueToAtlanta',
+                'full' => '#Hawks #TrueToAtlanta #AtlantaHawks #NBA',
+            ],
+            'united' => [
+                'short' => '#ATLUTD #UniteAndConquer',
+                'full' => '#ATLUTD #UniteAndConquer #AtlantaUnited #MLS #5Stripes',
+            ],
+            'dream' => [
+                'short' => '#AtlantaDream #DreamOn',
+                'full' => '#AtlantaDream #DreamOn #WNBA #WNBAPlayoffs',
+            ],
+            'uga' => [
+                'short' => '#UGA #GoDawgs',
+                'full' => '#UGA #GoDawgs #Dawgs #Georgia #SEC #DawgNation',
+            ],
+            'gt' => [
+                'short' => '#GaTech #TogetherWeSwarm',
+                'full' => '#GaTech #TogetherWeSwarm #YellowJackets #ACC #GTFootball',
+            ],
+            'olemiss' => [
+                'short' => '#OleMiss #HottyToddy',
+                'full' => '#OleMiss #HottyToddy #Rebels #SEC #OleMissRebels',
+            ],
+            'alabama' => [
+                'short' => '#RollTide #Alabama',
+                'full' => '#RollTide #Alabama #CrimsonTide #SEC #RTR #BamaFootball',
+            ],
+            'auburn' => [
+                'short' => '#WarEagle #Auburn',
+                'full' => '#WarEagle #Auburn #Tigers #SEC #AuburnTigers',
+            ],
+            'faze' => [
+                'short' => '#FaZeUp #FaZeClan',
+                'full' => '#FaZeUp #FaZeClan #AtlantaFaZe #Esports #Gaming #CDL',
+            ],
+        ];
+        
+        if (isset($hashtags[$team_key][$format])) {
+            return $hashtags[$team_key][$format];
+        } elseif (isset($hashtags[$team_key]['short'])) {
+            return $hashtags[$team_key]['short'];
+        }
+        
+        return '#Atlanta #Sports';
+    }
+    
+    /**
      * Get JWT token
      */
     private function get_token($force_refresh = false) {
@@ -15901,20 +16025,6 @@ class FLM_GameDay_Atlanta {
         $template = $settings['instagram_post_template'] ?? "📰 {headline}\n\n{team_hashtag}\n\n🔗 Link in bio";
         $team_config = $this->target_teams[$team_key] ?? [];
         
-        $team_hashtags = [
-            'braves' => '#Braves #ForTheA #ChopOn #AtlantaBraves #MLB',
-            'falcons' => '#Falcons #RiseUp #DirtyBirds #AtlantaFalcons #NFL',
-            'hawks' => '#Hawks #TrueToAtlanta #AtlantaHawks #NBA',
-            'united' => '#ATLUTD #UniteAndConquer #AtlantaUnited #MLS',
-            'dream' => '#AtlantaDream #DreamOn #WNBA',
-            'uga' => '#UGA #GoDawgs #Dawgs #Georgia #SEC',
-            'gt' => '#GaTech #TogetherWeSwarm #YellowJackets #ACC',
-            'olemiss' => '#OleMiss #HottyToddy #Rebels #SEC',
-            'alabama' => '#RollTide #Alabama #CrimsonTide #SEC',
-            'auburn' => '#WarEagle #Auburn #Tigers #SEC',
-            'faze' => '#FaZeUp #FaZeClan #AtlantaFaZe #Esports #Gaming',
-        ];
-        
         $caption = str_replace([
             '{headline}',
             '{team}',
@@ -15924,7 +16034,7 @@ class FLM_GameDay_Atlanta {
         ], [
             $headline,
             $team_config['name'] ?? '',
-            $team_hashtags[$team_key] ?? '#Atlanta #Sports',
+            $this->get_team_hashtags($team_key, 'full'),
             $team_config['league'] ?? '',
             $post_url,
         ], $template);
@@ -15967,20 +16077,6 @@ class FLM_GameDay_Atlanta {
         $template = $settings['twitter_post_template'] ?? '📰 {headline} #Atlanta #Sports {team_hashtag}';
         $team_config = $this->target_teams[$team_key] ?? [];
         
-        $team_hashtags = [
-            'braves' => '#Braves #ForTheA',
-            'falcons' => '#Falcons #RiseUp',
-            'hawks' => '#Hawks #TrueToAtlanta',
-            'united' => '#ATLUTD #UniteAndConquer',
-            'dream' => '#AtlantaDream #DreamOn',
-            'uga' => '#UGA #GoDawgs',
-            'gt' => '#GaTech #TogetherWeSwarm',
-            'olemiss' => '#OleMiss #HottyToddy',
-            'alabama' => '#RollTide #RTR',
-            'auburn' => '#WarEagle #Auburn',
-            'faze' => '#FaZeUp #FaZeClan',
-        ];
-        
         $tweet_text = str_replace([
             '{headline}',
             '{url}',
@@ -15991,7 +16087,7 @@ class FLM_GameDay_Atlanta {
             $headline,
             $tracked_url,
             $team_config['name'] ?? '',
-            $team_hashtags[$team_key] ?? '#Atlanta',
+            $this->get_team_hashtags($team_key, 'short'),
             $team_config['league'] ?? '',
         ], $template);
         
@@ -19323,16 +19419,9 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
         $team = $this->target_teams[$team_key] ?? [];
         $tracked = $this->build_utm_url($url, 'twitter', $team_key);
         
-        $hashtags = [
-            'braves' => '#Braves #ForTheA', 'falcons' => '#Falcons #RiseUp', 'hawks' => '#Hawks #TrueToAtlanta',
-            'united' => '#ATLUTD #UniteAndConquer', 'dream' => '#AtlantaDream', 'uga' => '#UGA #GoDawgs',
-            'gt' => '#GaTech #TogetherWeSwarm', 'olemiss' => '#OleMiss #HottyToddy', 'alabama' => '#RollTide #RTR',
-            'auburn' => '#WarEagle #Auburn', 'faze' => '#FaZeUp', 'reign' => '#ATLReign',
-        ];
-        
         $tweet = str_replace(
             ['{headline}', '{url}', '{team}', '{team_hashtag}', '{league}'],
-            [$text, $tracked, $team['name'] ?? '', $hashtags[$team_key] ?? '#Atlanta', $team['league'] ?? ''],
+            [$text, $tracked, $team['name'] ?? '', $this->get_team_hashtags($team_key, 'short'), $team['league'] ?? ''],
             $tpl
         );
         
@@ -19374,7 +19463,8 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
     }
     
     /**
-     * Upload media to Twitter (OAuth 1.0a required - placeholder)
+     * Upload media to Twitter using OAuth 1.0a
+     * Requires twitter_api_key, twitter_api_secret, twitter_access_token, twitter_access_secret
      */
     private function upload_twitter_media($image_url, $oauth2_token) {
         // Twitter media upload requires OAuth 1.0a - use stored credentials
@@ -19451,6 +19541,33 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
         
         $error = $body['errors'][0]['message'] ?? $body['error'] ?? "Media upload failed (HTTP $code)";
         return ['success' => false, 'error' => $error];
+    }
+    
+    /**
+     * AJAX handler for testing Twitter media upload
+     */
+    public function ajax_twitter_upload_media() {
+        check_ajax_referer('flm_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Permission denied']);
+        }
+        
+        $image_url = esc_url_raw($_POST['image_url'] ?? '');
+        if (empty($image_url)) {
+            wp_send_json_error(['message' => 'Image URL required']);
+        }
+        
+        $result = $this->upload_twitter_media($image_url, '');
+        
+        if ($result['success']) {
+            wp_send_json_success([
+                'media_id' => $result['media_id'],
+                'message' => 'Media uploaded successfully',
+            ]);
+        } else {
+            wp_send_json_error(['message' => $result['error'] ?? 'Upload failed']);
+        }
     }
     
     /**
@@ -19974,20 +20091,6 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
         $team_config = $this->target_teams[$team_key] ?? [];
         $post_url = get_permalink($post->ID);
         
-        $team_hashtags = [
-            'braves' => '#Braves #ForTheA',
-            'falcons' => '#Falcons #RiseUp',
-            'hawks' => '#Hawks #TrueToAtlanta',
-            'united' => '#ATLUTD #UniteAndConquer',
-            'dream' => '#AtlantaDream #DreamOn',
-            'uga' => '#UGA #GoDawgs',
-            'gt' => '#GaTech #TogetherWeSwarm',
-            'olemiss' => '#OleMiss #HottyToddy',
-            'alabama' => '#RollTide #RTR',
-            'auburn' => '#WarEagle #Auburn',
-            'faze' => '#FaZeUp #FaZeClan',
-        ];
-        
         if ($platform === 'twitter') {
             $template = $settings['twitter_post_template'] ?? '📰 {headline} #Atlanta #Sports {team_hashtag}';
             $text = str_replace([
@@ -20000,7 +20103,7 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
                 $post->post_title,
                 $post_url,
                 $team_config['name'] ?? '',
-                $team_hashtags[$team_key] ?? '#Atlanta',
+                $this->get_team_hashtags($team_key, 'short'),
                 $team_config['league'] ?? '',
             ], $template);
             
@@ -25917,20 +26020,6 @@ Respond in JSON format only:
             $team_config = $this->target_teams[$team_key] ?? [];
             $tracked_url = $this->build_utm_url($url, 'twitter', $team_key);
             
-            $team_hashtags = [
-                'braves' => '#Braves #ForTheA',
-                'falcons' => '#Falcons #RiseUp',
-                'hawks' => '#Hawks #TrueToAtlanta',
-                'united' => '#ATLUTD #UniteAndConquer',
-                'dream' => '#AtlantaDream #DreamOn',
-                'uga' => '#UGA #GoDawgs',
-                'gt' => '#GaTech #TogetherWeSwarm',
-                'olemiss' => '#OleMiss #HottyToddy',
-                'alabama' => '#RollTide #RTR',
-                'auburn' => '#WarEagle #Auburn',
-                'faze' => '#FaZeUp #FaZeClan',
-            ];
-            
             $tweet_text = str_replace([
                 '{headline}',
                 '{url}',
@@ -25941,7 +26030,7 @@ Respond in JSON format only:
                 $text,
                 $tracked_url,
                 $team_config['name'] ?? '',
-                $team_hashtags[$team_key] ?? '#Atlanta',
+                $this->get_team_hashtags($team_key, 'short'),
                 $team_config['league'] ?? '',
             ], $template);
             
