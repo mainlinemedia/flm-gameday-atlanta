@@ -3,7 +3,7 @@
  * Plugin Name: FLM GameDay Atlanta
  * Plugin URI: https://github.com/mainlinemedia/flm-gameday-atlanta
  * Description: Import Braves, Hawks, Falcons, United, Dream, UGA & GT content from Field Level Media with AI enhancement, social posting, and analytics.
- * Version: 2.23.0
+ * Version: 2.23.1
  * Author: Austin / Mainline Media Group
  * Author URI: https://mainlinemediagroup.com
  * License: Proprietary
@@ -20,7 +20,7 @@ if (!defined('ABSPATH')) exit;
 class FLM_GameDay_Atlanta {
     
     private $api_base = 'https://api.fieldlevelmedia.com/v1';
-    private $version = '2.23.0';
+    private $version = '2.23.1';
     
     // GitHub Update Configuration
     private $github_username = 'mainlinemedia';
@@ -5070,6 +5070,14 @@ class FLM_GameDay_Atlanta {
     color: var(--flm-text-muted);
 }
 
+.flm-preview-stat-value.scheduled {
+    color: var(--flm-warning);
+}
+
+.flm-preview-stat-value.published {
+    color: var(--flm-success);
+}
+
 .flm-preview-stat-label {
     font-size: 11px;
     text-transform: uppercase;
@@ -5128,6 +5136,12 @@ class FLM_GameDay_Atlanta {
     background: rgba(46, 160, 67, 0.15);
     color: #2ea043;
     border: 1px solid #2ea043;
+}
+
+.flm-preview-item-badge.protected.scheduled {
+    background: rgba(210, 153, 34, 0.15);
+    color: var(--flm-warning);
+    border: 1px solid var(--flm-warning);
 }
 
 .flm-preview-item-badge.skip {
@@ -12366,6 +12380,9 @@ class FLM_GameDay_Atlanta {
         const newCount = data.stories.filter(s => s.action === "create").length;
         const updateCount = data.stories.filter(s => s.action === "update").length;
         const protectedCount = data.stories.filter(s => s.action === "protected").length;
+        const scheduledCount = data.stories.filter(s => s.action === "protected" && s.existing_status === "future").length;
+        const publishedCount = protectedCount - scheduledCount;
+        const fuzzyCount = data.stories.filter(s => s.action === "fuzzy_match").length;
         const skipCount = data.skipped || 0;
         
         let html = 
@@ -12379,9 +12396,14 @@ class FLM_GameDay_Atlanta {
                     "<div class=\"flm-preview-stat-label\">Updates</div>" +
                 "</div>" +
                 "<div class=\"flm-preview-stat\">" +
-                    "<div class=\"flm-preview-stat-value\" style=\"color:var(--flm-success);\">" + protectedCount + "</div>" +
-                    "<div class=\"flm-preview-stat-label\">Protected</div>" +
+                    "<div class=\"flm-preview-stat-value\" style=\"color:var(--flm-success);\">" + publishedCount + "</div>" +
+                    "<div class=\"flm-preview-stat-label\">Published</div>" +
                 "</div>" +
+                (scheduledCount > 0 ? 
+                "<div class=\"flm-preview-stat\">" +
+                    "<div class=\"flm-preview-stat-value\" style=\"color:var(--flm-warning);\">" + scheduledCount + "</div>" +
+                    "<div class=\"flm-preview-stat-label\">Scheduled</div>" +
+                "</div>" : "") +
                 "<div class=\"flm-preview-stat\">" +
                     "<div class=\"flm-preview-stat-value\">" + data.stories.length + "</div>" +
                     "<div class=\"flm-preview-stat-label\">Total</div>" +
@@ -12403,7 +12425,11 @@ class FLM_GameDay_Atlanta {
                 "</div>" +
                 "<div class=\"flm-selection-count\">" +
                     "<strong id=\"flm-selected-count\">" + importableCount + "</strong> of " + importableCount + " selected" +
-                    (protectedCount > 0 ? " <span style=\"color:var(--flm-success);font-size:11px;\">(" + protectedCount + " protected)</span>" : "") +
+                    (protectedCount > 0 ? " <span style=\"font-size:11px;\">(" + 
+                        (publishedCount > 0 ? "<span style=\"color:var(--flm-success);\">" + publishedCount + " published</span>" : "") +
+                        (publishedCount > 0 && scheduledCount > 0 ? ", " : "") +
+                        (scheduledCount > 0 ? "<span style=\"color:var(--flm-warning);\">" + scheduledCount + " scheduled</span>" : "") +
+                        " protected)</span>" : "") +
                 "</div>" +
             "</div>";
         
@@ -12413,7 +12439,8 @@ class FLM_GameDay_Atlanta {
                 "<button class=\"flm-preview-filter active\" data-filter=\"all\">All <span class=\"count\">" + data.stories.length + "</span></button>" +
                 "<button class=\"flm-preview-filter\" data-filter=\"create\">New <span class=\"count\">" + newCount + "</span></button>" +
                 "<button class=\"flm-preview-filter\" data-filter=\"update\">Updates <span class=\"count\">" + updateCount + "</span></button>" +
-                (protectedCount > 0 ? "<button class=\"flm-preview-filter\" data-filter=\"protected\">Protected <span class=\"count\">" + protectedCount + "</span></button>" : "") +
+                (publishedCount > 0 ? "<button class=\"flm-preview-filter\" data-filter=\"published\">Published <span class=\"count\">" + publishedCount + "</span></button>" : "") +
+                (scheduledCount > 0 ? "<button class=\"flm-preview-filter\" data-filter=\"scheduled\">Scheduled <span class=\"count\">" + scheduledCount + "</span></button>" : "") +
             "</div>";
         
         // Story list with checkboxes
@@ -12434,13 +12461,13 @@ class FLM_GameDay_Atlanta {
             }
             
             html += 
-                "<div class=\"flm-preview-item" + (isProtected ? "" : " selected") + "\" data-action=\"" + story.action + "\" data-index=\"" + index + "\" data-story-id=\"" + escapeHtml(story.story_id) + "\"" + (isProtected ? " style=\"opacity:0.6;\"" : "") + ">" +
+                "<div class=\"flm-preview-item" + (isProtected ? "" : " selected") + "\" data-action=\"" + story.action + "\" data-status=\"" + (story.existing_status || "") + "\" data-index=\"" + index + "\" data-story-id=\"" + escapeHtml(story.story_id) + "\"" + (isProtected ? " style=\"opacity:0.7;\"" : "") + ">" +
                     "<div class=\"flm-preview-item-checkbox\">" +
                         (isProtected 
-                            ? "<span style=\"color:var(--flm-success);\" title=\"Published posts are protected from changes\">🔒</span>"
+                            ? "<span style=\"color:var(--flm-success);\" title=\"" + (story.existing_status === "future" ? "Scheduled posts are protected from changes" : "Published posts are protected from changes") + "\">🔒</span>"
                             : "<input type=\"checkbox\" class=\"flm-preview-checkbox flm-story-checkbox\" data-index=\"" + index + "\" checked>") +
                     "</div>" +
-                    "<div class=\"flm-preview-item-badge " + badge + "\">" + badgeText + "</div>" +
+                    "<div class=\"flm-preview-item-badge " + badge + (story.existing_status === "future" ? " scheduled" : "") + "\">" + badgeText + "</div>" +
                     "<div class=\"flm-preview-item-content\">" +
                         "<div class=\"flm-preview-item-title\">" + escapeHtml(story.headline) + "</div>" +
                         "<div class=\"flm-preview-item-meta\">" +
@@ -12457,7 +12484,7 @@ class FLM_GameDay_Atlanta {
                                 escapeHtml(story.type || "Story") +
                             "</span>" +
                             (story.existing_id ? "<span style=\"color:var(--flm-info);\">ID: " + story.existing_id + "</span>" : "") +
-                            (isProtected ? "<span style=\"color:var(--flm-success);\">Published - Protected</span>" : "") +
+                            (isProtected ? (story.existing_status === "future" ? "<span style=\"color:var(--flm-warning);\">⏰ Scheduled - Protected</span>" : "<span style=\"color:var(--flm-success);\">✓ Published - Protected</span>") : "") +
                         "</div>" +
                     "</div>" +
                 "</div>";
@@ -12565,7 +12592,7 @@ class FLM_GameDay_Atlanta {
         $checkbox.prop("checked", !$checkbox.prop("checked")).trigger("change");
     });
     
-    // Filter preview items (updated to preserve selection)
+    // Filter preview items (updated to preserve selection and support status-based filters)
     $(document).on("click", ".flm-preview-filter", function() {
         const filter = $(this).data("filter");
         $(".flm-preview-filter").removeClass("active");
@@ -12573,11 +12600,20 @@ class FLM_GameDay_Atlanta {
         
         $(".flm-preview-item").each(function() {
             const action = $(this).data("action");
-            if (filter === "all" || action === filter) {
-                $(this).show();
+            const status = $(this).data("status");
+            let show = false;
+            
+            if (filter === "all") {
+                show = true;
+            } else if (filter === "published") {
+                show = action === "protected" && status === "publish";
+            } else if (filter === "scheduled") {
+                show = action === "protected" && status === "future";
             } else {
-                $(this).hide();
+                show = action === filter;
             }
+            
+            $(this).toggle(show);
         });
     });
     
@@ -15601,9 +15637,9 @@ class FLM_GameDay_Atlanta {
             'post_status' => 'any',
         ]);
         
-        // PROTECT PUBLISHED POSTS - never overwrite published content
-        if (!empty($existing) && $existing[0]->post_status === 'publish') {
-            // Update only metadata, never content
+        // PROTECT PUBLISHED AND SCHEDULED POSTS - never overwrite published or future content
+        if (!empty($existing) && in_array($existing[0]->post_status, ['publish', 'future'], true)) {
+            // Update only metadata, never content or status
             $post_id = $existing[0]->ID;
             update_post_meta($post_id, 'flm_last_exported', $story['lastExportedDate'] ?? '');
             return ['post_id' => $post_id, 'action' => 'protected'];
@@ -17972,7 +18008,7 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
                 if (!empty($existing)) {
                     $existing_id = $existing[0]->ID;
                     $existing_status = $existing[0]->post_status;
-                    $action = ($existing_status === 'publish') ? 'protected' : 'update';
+                    $action = in_array($existing_status, ['publish', 'future'], true) ? 'protected' : 'update';
                 } else {
                     // v2.22.0: Check for fuzzy duplicate by title
                     $headline = wp_strip_all_tags($story['headline']);
@@ -17980,7 +18016,7 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
                     if ($fuzzy) {
                         $existing_id = $fuzzy['post_id'];
                         $existing_status = get_post_status($fuzzy['post_id']);
-                        $action = ($existing_status === 'publish') ? 'protected' : 'fuzzy_match';
+                        $action = in_array($existing_status, ['publish', 'future'], true) ? 'protected' : 'fuzzy_match';
                         $fuzzy_match = $fuzzy;
                     }
                 }
@@ -19435,7 +19471,7 @@ Consider: length, emotional impact, clarity, SEO, click-worthiness, and sports j
             self::$recent_posts_cache[$team_key] = $wpdb->get_results($wpdb->prepare(
                 "SELECT p.ID, p.post_title FROM {$wpdb->posts} p
                  INNER JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id AND pm.meta_key = 'flm_team' AND pm.meta_value = %s
-                 WHERE p.post_type = 'post' AND p.post_status IN ('publish','draft','pending')
+                 WHERE p.post_type = 'post' AND p.post_status IN ('publish','draft','pending','future')
                  AND p.post_date > DATE_SUB(NOW(), INTERVAL 7 DAY)
                  ORDER BY p.post_date DESC LIMIT 200",
                 $team_key
