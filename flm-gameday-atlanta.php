@@ -3,7 +3,7 @@
  * Plugin Name: FLM GameDay Atlanta
  * Plugin URI: https://github.com/mainlinemedia/flm-gameday-atlanta
  * Description: Import Braves, Hawks, Falcons, United, Dream, UGA & GT content from Field Level Media with AI enhancement, social posting, and analytics.
- * Version: 2.23.3
+ * Version: 2.23.4
  * Author: Austin / Mainline Media Group
  * Author URI: https://mainlinemediagroup.com
  * License: Proprietary
@@ -20,7 +20,7 @@ if (!defined('ABSPATH')) exit;
 class FLM_GameDay_Atlanta {
     
     private $api_base = 'https://api.fieldlevelmedia.com/v1';
-    private $version = '2.23.3';
+    private $version = '2.23.4';
     
     // GitHub Update Configuration
     private $github_username = 'mainlinemedia';
@@ -25495,12 +25495,15 @@ Respond in JSON format only:
         if (version_compare($current_version, $remote_version, '<')) {
             $plugin_data = get_plugin_data(__FILE__);
             
+            // Get download URL - prefer release asset over zipball
+            $download_url = $this->get_release_download_url($remote_info);
+            
             $obj = new stdClass();
             $obj->slug = dirname(plugin_basename(__FILE__));
             $obj->plugin = plugin_basename(__FILE__);
             $obj->new_version = $remote_version;
             $obj->url = "https://github.com/{$this->github_username}/{$this->github_repo}";
-            $obj->package = $remote_info['zipball_url'];
+            $obj->package = $download_url;
             $obj->icons = [
                 '1x' => "https://raw.githubusercontent.com/{$this->github_username}/{$this->github_repo}/{$this->github_branch}/assets/icon-128x128.png",
                 '2x' => "https://raw.githubusercontent.com/{$this->github_username}/{$this->github_repo}/{$this->github_branch}/assets/icon-256x256.png",
@@ -25509,13 +25512,40 @@ Respond in JSON format only:
                 'low' => "https://raw.githubusercontent.com/{$this->github_username}/{$this->github_repo}/{$this->github_branch}/assets/banner-772x250.png",
                 'high' => "https://raw.githubusercontent.com/{$this->github_username}/{$this->github_repo}/{$this->github_branch}/assets/banner-1544x500.png",
             ];
-            $obj->tested = '6.9';
+            $obj->tested = '6.7';
             $obj->requires_php = '7.4';
             
             $transient->response[plugin_basename(__FILE__)] = $obj;
         }
         
         return $transient;
+    }
+    
+    /**
+     * Get the best download URL for a release
+     * Prefers uploaded release assets over auto-generated zipball
+     */
+    private function get_release_download_url($release_info) {
+        // First, check for uploaded release assets (e.g., flm-gameday-atlanta-v2.23.3.zip)
+        if (!empty($release_info['assets']) && is_array($release_info['assets'])) {
+            foreach ($release_info['assets'] as $asset) {
+                // Look for a zip file asset
+                if (isset($asset['browser_download_url']) && 
+                    strpos($asset['name'], '.zip') !== false &&
+                    strpos($asset['name'], 'flm-gameday') !== false) {
+                    return $asset['browser_download_url'];
+                }
+            }
+            // Fallback: any zip file
+            foreach ($release_info['assets'] as $asset) {
+                if (isset($asset['browser_download_url']) && strpos($asset['name'], '.zip') !== false) {
+                    return $asset['browser_download_url'];
+                }
+            }
+        }
+        
+        // Fallback to zipball_url (slower, but works)
+        return $release_info['zipball_url'] ?? '';
     }
     
     /**
@@ -25547,7 +25577,7 @@ Respond in JSON format only:
         
         $response = wp_remote_get($url, [
             'headers' => $headers,
-            'timeout' => 10,
+            'timeout' => 30,
         ]);
         
         if (is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) {
@@ -25599,13 +25629,13 @@ Respond in JSON format only:
         $result->requires_php = '7.4';
         $result->downloaded = 0;
         $result->last_updated = $remote_info['published_at'];
-        $result->download_link = $remote_info['zipball_url'];
+        $result->download_link = $this->get_release_download_url($remote_info);
         
         // Parse changelog from release body
         $result->sections = [
             'description' => $plugin_data['Description'] . '<br><br><strong>Features:</strong><ul>
                 <li>Import content from Field Level Media API</li>
-                <li>7 Atlanta teams: Braves, Falcons, Hawks, United, Dream, UGA, GT</li>
+                <li>11 teams: Braves, Falcons, Hawks, United, Dream, UGA, GT, Ole Miss, Alabama, Auburn, FaZe</li>
                 <li>AI-powered headline analysis with Claude</li>
                 <li>Real-time analytics dashboard with GA4 integration</li>
                 <li>Breaking news email/Slack alerts</li>
